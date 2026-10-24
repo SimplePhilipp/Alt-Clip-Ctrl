@@ -1,0 +1,8 @@
+bin/
+obj/
+test-results/
+.vs/
+AltClipCtrl.settings.xml
+*.tmp
+*.user
+*.suo
