@@ -43,13 +43,15 @@ The default tap wait is **100 ms**: start the second press within that window af
 - **Auto-detect Clip Studio Paint:** on by default, limiting bindings to CSP. Off lets bindings work in other foreground apps too. The helper's own windows, including Config and key recording, are always excluded.
 - **Alt / Ctrl / Shift tabs:** enable or disable each modifier independently. Change forward/backward input keys, tap output, held-input outputs, and timings. An ordinary hold always remains its original modifier.
 - **Record:** press a keyboard key or combination instead of typing its name. Rotation inputs must be single keys. Outputs support combinations such as `Ctrl+Shift+F1`. You can also type names such as `Space`, `Escape`, `Plus`, or `Minus`; Win combinations can be typed manually.
-- **Tools:** edit tool names and CSP shortcuts, reorder rows, add rows at the bottom, or remove tools. The listed order is the cycle order. Tool names and shortcuts must be unique. Supports 1-64 tools.
+- **Alt cycle / Ctrl cycle / Shift cycle:** three independent lists with separate remembered positions. Edit names and shortcuts, reorder rows, add rows at the bottom, or remove tools. Each list supports 1-64 tools with unique names and shortcuts within that list. Different cycles may share shortcuts.
 - **Notation:** explains `-`, `_`, `-_`, and `+` with examples.
 - **Restore defaults:** fills the dialog with defaults. Save applies them; Cancel leaves the running config unchanged.
 
 Save writes **AltClipCtrl.settings.xml** beside the executable. Keep that file when upgrading to retain your settings. No keystroke history is written. The included **AltClipCtrl.settings.example.xml** shows default settings but is not loaded automatically. If Save fails, move the app to a writable folder.
 
 ## Tools and tracking
+
+Alt, Ctrl and Shift each use their own cycle. For example, cycling Alt to Brush, then cycling Ctrl, leaves Alt at Brush; returning to Alt continues from there. All three start with the existing 20-tool order, and can be customized independently in Config. Existing v1.0 settings are migrated automatically by copying the old list into each cycle. Saving Config writes the new format; keep a backup if you need to return to v1.0.
 
 Default order:
 
@@ -66,9 +68,9 @@ Default order:
 | 9 | Selection area | F10 | Move |
 | F1 | Fill | F11 | Eyedropper |
 
-The app observes configured tool shortcuts used directly on your keyboard or controller, including modifier combinations. Its own mapped outputs also update tracking if they match a configured tool shortcut. Mouse selections and unknown shortcuts cannot be identified directly: CSP does not expose its current tool through a supported simple query. After a mouse selection, press that tool's configured shortcut to resync. The old Match tracker button and menu are removed.
+The app observes configured tool shortcuts used directly on your keyboard or controller, including modifier combinations. A direct shortcut updates each cycle containing that shortcut, at its own matching row. Cycling and mapped gesture outputs update only the modifier that issued them, even when another cycle contains the same shortcut. Mouse selections and unknown shortcuts cannot be identified directly: CSP does not expose its current tool through a supported simple query. After a mouse selection, press that tool's configured shortcut to resync. The old Match tracker button and menu are removed.
 
-The app remembers requested selections; it cannot confirm CSP accepted them. When tracking is unknown, first next selects the first listed tool and first previous selects the last. Tools wrap at both ends. An unknown tap output such as default B resets tracking; other unmapped held outputs retain the latest tracked tool.
+The app remembers requested selections; it cannot confirm CSP accepted them. Each cycle wraps independently. When its position is unknown, first next selects its first listed tool and first previous selects its last. An unknown tap output such as default B resets only that modifier's position; other unmapped held outputs retain its latest position. The main window shows all three positions. The tray command **Forget all cycle positions** resets all three.
 
 Set corresponding shortcuts in CSP yourself. Remove collisions with menu, palette, group, or individual-tool shortcuts. This helper does not change CSP settings. Use with the canvas active, outside dialogs/text editing and between brush strokes. Pause while changing CSP shortcuts. When auto-detection is off, tool tracking observes the same keys in other apps too and cannot imply CSP's active tool.
 
@@ -80,7 +82,7 @@ The optimized event path retains rapid injected notches and balanced nested modi
 
 ## Privacy and limitations
 
-No network code, clipboard access, keystroke log, startup entry, registry changes, or automatic updater. Current held-key state, gestures, and the latest tracked tool stay in memory. Only settings explicitly saved through Config are persisted. Temporary keyboard/mouse listeners are installed in the selected scope and removed when disabled, paused, or outside that scope.
+No network code, clipboard access, keystroke log, startup entry, registry changes, or automatic updater. Current held-key state, gestures, and the three cycle positions stay in memory. Only settings explicitly saved through Config are persisted. Temporary keyboard/mouse listeners are installed in the selected scope and removed when disabled, paused, or outside that scope.
 
 Keep CSP and the helper at normal privileges; Windows may block input sent to a more privileged app. The executable is unsigned. The icon and source are included. Exit the app and delete its files to remove it.
 
@@ -105,7 +107,7 @@ The smoke test initializes the app and Config tabs, produces preview images, and
 
 ## Verification
 
-Checked: the gesture regressions and rapid simulated dial sequences; Alt/Ctrl/Shift routing together; per-modifier disable; native modifier holds and multi-modifier shortcuts; custom input/output parsing; chord output and modifier restoration; variable tool counts and wraparound; config validation and XML serialization; first save, atomic replacement and reload; default detection scope; global/profile switches; custom icon, Config tabs, notation page, and startup/shutdown.
+Checked: independent cycle positions and wraparound; switching between cycles; different per-cycle lists and shortcut matching; legacy XML migration with independent copies; editing and reloading the three cycle grids; gesture regressions and rapid simulated dial sequences; Alt/Ctrl/Shift routing together; disable switches; native modifier holds and multi-modifier shortcuts; custom bindings; chord output and modifier restoration; config validation/serialization; custom icon, notation page, and startup/shutdown.
 
 The rendered UI was visually checked. Actual selection and latency in CSP still need testing with your dial and workspace. No hardware performance result is claimed. Diagnostic command-line modes are `--self-test <report-path>` and `--smoke-test <report-path>`; the latter also writes UI previews beside its report.
 

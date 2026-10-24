@@ -9,7 +9,7 @@ internal sealed class ConfigForm : Form
     private readonly CheckBox enabled = new CheckBox(), detection = new CheckBox();
     private readonly TabControl tabs = new TabControl();
     private readonly List<ProfileEditor> profiles = new List<ProfileEditor>();
-    private readonly DataGridView tools = new DataGridView();
+    private readonly List<DataGridView> cycleGrids = new List<DataGridView>();
     private readonly string notation =
         "THE TAP / HOLD NOTATION\r\n\r\n" +
         "- means tap: press a key and release it quickly.\r\n" +
@@ -32,7 +32,8 @@ internal sealed class ConfigForm : Form
         "Shortcut text examples: B, F12, Space, Ctrl+Shift+F1, Alt+Left.\r\n" +
         "Use Plus or Minus for those keys. Outputs can be key combinations;\r\n" +
         "rotation inputs must be single keyboard keys. CSP assignments must\r\n" +
-        "match the Tools tab; this app does not edit CSP's settings.";
+        "match that modifier's cycle tab; this app does not edit CSP's settings.\r\n" +
+        "Alt, Ctrl and Shift have separate lists and remember separate positions.";
 
     internal ConfigForm(AppSettings settings)
     {
@@ -58,9 +59,8 @@ internal sealed class ConfigForm : Form
     }
     private void LoadSettings(AppSettings settings)
     {
-        if (tools.Parent != null) tools.Parent.Controls.Remove(tools);
         while (tabs.TabPages.Count > 0) { TabPage old = tabs.TabPages[0]; tabs.TabPages.RemoveAt(0); old.Dispose(); }
-        profiles.Clear();
+        profiles.Clear(); cycleGrids.Clear();
         enabled.Checked = settings.Enabled; detection.Checked = settings.DetectClipStudio;
         foreach (ModifierBinding p in settings.Modifiers)
         {
@@ -68,8 +68,17 @@ internal sealed class ConfigForm : Form
             var editor = new ProfileEditor(p); editor.Dock = DockStyle.Fill;
             tab.Controls.Add(editor); tabs.TabPages.Add(tab); profiles.Add(editor);
         }
-        var toolTab = new TabPage("Tools");
-        var help = new Label { Text = "Tool order and CSP shortcuts. Edit cells, use Record, or add a row at the bottom.",
+        foreach (ModifierBinding p in settings.Modifiers) AddCycleTab(p);
+        var notationTab = new TabPage("Notation");
+        var text = new TextBox { Multiline = true, ReadOnly = true, BorderStyle = BorderStyle.None, BackColor = Color.White,
+            ScrollBars = ScrollBars.Vertical, Font = new Font("Consolas", 10), Text = notation, Dock = DockStyle.Fill };
+        notationTab.Padding = new Padding(14); notationTab.Controls.Add(text); tabs.TabPages.Add(notationTab);
+    }
+    private void AddCycleTab(ModifierBinding profile)
+    {
+        var tools = new DataGridView(); cycleGrids.Add(tools);
+        var toolTab = new TabPage(profile.Modifier + " cycle");
+        var help = new Label { Text = profile.Modifier + " only: cycle order and shortcuts. Edit cells, Record, or add a bottom row.",
             Location = new Point(12, 12), Size = new Size(680, 24) };
         tools.SetBounds(12, 44, 696, 372); tools.Columns.Clear(); tools.Rows.Clear();
         tools.AllowUserToAddRows = true; tools.AllowUserToDeleteRows = true; tools.AutoGenerateColumns = false;
@@ -78,21 +87,18 @@ internal sealed class ConfigForm : Form
         tools.Columns.Add(new DataGridViewTextBoxColumn { Name = "Tool", HeaderText = "Tool name", FillWeight = 45 });
         tools.Columns.Add(new DataGridViewTextBoxColumn { Name = "Shortcut", HeaderText = "Shortcut", FillWeight = 35 });
         tools.Columns.Add(new DataGridViewButtonColumn { Name = "Record", HeaderText = "", Text = "Record", UseColumnTextForButtonValue = true, FillWeight = 20 });
-        foreach (ToolBinding tool in settings.Tools) tools.Rows.Add(tool.Name, tool.Shortcut);
-        tools.CellContentClick -= RecordTool; tools.CellContentClick += RecordTool;
+        foreach (ToolBinding tool in profile.Tools) tools.Rows.Add(tool.Name, tool.Shortcut);
+        tools.CellContentClick += RecordTool;
         var up = new Button { Text = "Move up", Location = new Point(12, 431), Size = new Size(130, 33) };
         var down = new Button { Text = "Move down", Location = new Point(152, 431), Size = new Size(130, 33) };
         var remove = new Button { Text = "Remove tool", Location = new Point(292, 431), Size = new Size(145, 33) };
-        up.Click += delegate { MoveTool(-1); }; down.Click += delegate { MoveTool(1); };
+        up.Click += delegate { MoveTool(tools, -1); }; down.Click += delegate { MoveTool(tools, 1); };
         remove.Click += delegate { if (tools.CurrentRow != null && !tools.CurrentRow.IsNewRow) tools.Rows.Remove(tools.CurrentRow); };
         toolTab.Controls.AddRange(new Control[] { help, tools, up, down, remove }); tabs.TabPages.Add(toolTab);
-        var notationTab = new TabPage("Notation");
-        var text = new TextBox { Multiline = true, ReadOnly = true, BorderStyle = BorderStyle.None, BackColor = Color.White,
-            ScrollBars = ScrollBars.Vertical, Font = new Font("Consolas", 10), Text = notation, Dock = DockStyle.Fill };
-        notationTab.Padding = new Padding(14); notationTab.Controls.Add(text); tabs.TabPages.Add(notationTab);
     }
     private void RecordTool(object sender, DataGridViewCellEventArgs e)
     {
+        var tools = (DataGridView)sender;
         if (e.RowIndex < 0 || e.ColumnIndex != 2) return;
         using (var dialog = new CaptureKeyForm(false))
             if (dialog.ShowDialog(this) == DialogResult.OK)
@@ -102,7 +108,7 @@ internal sealed class ConfigForm : Form
                 else tools.Rows[row].Cells[1].Value = dialog.Shortcut;
             }
     }
-    private void MoveTool(int direction)
+    private void MoveTool(DataGridView tools, int direction)
     {
         tools.EndEdit(); if (tools.CurrentRow == null || tools.CurrentRow.IsNewRow) return;
         int from = tools.CurrentRow.Index, to = from + direction;
@@ -112,16 +118,20 @@ internal sealed class ConfigForm : Form
     }
     internal AppSettings ReadSettings()
     {
-        tools.EndEdit();
         var s = new AppSettings { Enabled = enabled.Checked, DetectClipStudio = detection.Checked,
-            Modifiers = new List<ModifierBinding>(), Tools = new List<ToolBinding>() };
-        foreach (ProfileEditor editor in profiles) s.Modifiers.Add(editor.Read());
-        foreach (DataGridViewRow row in tools.Rows)
+            Modifiers = new List<ModifierBinding>() };
+        for (int i = 0; i < profiles.Count; i++)
         {
-            if (row.IsNewRow) continue;
-            string name = Convert.ToString(row.Cells[0].Value).Trim(), key = Convert.ToString(row.Cells[1].Value).Trim();
-            if (name.Length == 0 && key.Length == 0) continue;
-            s.Tools.Add(new ToolBinding { Name = name, Shortcut = key });
+            ModifierBinding profile = profiles[i].Read(); profile.Tools = new List<ToolBinding>();
+            cycleGrids[i].EndEdit();
+            foreach (DataGridViewRow row in cycleGrids[i].Rows)
+            {
+                if (row.IsNewRow) continue;
+                string name = Convert.ToString(row.Cells[0].Value).Trim(), key = Convert.ToString(row.Cells[1].Value).Trim();
+                if (name.Length == 0 && key.Length == 0) continue;
+                profile.Tools.Add(new ToolBinding { Name = name, Shortcut = key });
+            }
+            s.Modifiers.Add(profile);
         }
         return s;
     }
@@ -129,13 +139,23 @@ internal sealed class ConfigForm : Form
     {
         IntPtr handle = Handle; CreateControl();
         AppSettings fromUi = ReadSettings(); fromUi.Validate();
-        if (tabs.TabPages.Count != 5 || fromUi.Modifiers.Count != 3) throw new Exception("Config tabs missing.");
+        if (tabs.TabPages.Count != 7 || fromUi.Modifiers.Count != 3) throw new Exception("Config tabs missing.");
         for (int i = 0; i < tabs.TabPages.Count; i++)
         {
             tabs.SelectedIndex = i; CreateHandles(this); PerformLayout();
             using (var bitmap = new Bitmap(Width, Height))
             { DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size)); bitmap.Save(report + ".config-" + i + ".png"); }
         }
+        cycleGrids[1].Rows[0].Cells[0].Value = "Ctrl custom";
+        cycleGrids[1].Rows[0].Cells[1].Value = "F12";
+        cycleGrids[2].Rows.RemoveAt(0);
+        AppSettings edited = ReadSettings(); edited.Validate();
+        if (edited.Modifiers[0].Tools[0].Name != "Pen" || edited.Modifiers[1].Tools[0].Shortcut != "F12" || edited.Modifiers[2].Tools.Count != 19)
+            throw new Exception("Editing a cycle affected another cycle.");
+        LoadSettings(edited); AppSettings reloaded = ReadSettings(); reloaded.Validate();
+        if (reloaded.Modifiers[1].Tools[0].Name != "Ctrl custom" || reloaded.Modifiers[2].Tools[0].Name != "Sketch")
+            throw new Exception("Cycle UI round-trip.");
+        LoadSettings(fromUi);
     }
     private static void CreateHandles(Control control)
     {

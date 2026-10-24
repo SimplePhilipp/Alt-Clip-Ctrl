@@ -15,6 +15,49 @@ internal struct GestureResult
     internal int Profile;
 }
 
+internal sealed class ToolCycle
+{
+    internal readonly List<ToolBinding> Tools;
+    internal readonly KeyChord[] Chords;
+    internal readonly Native.INPUT[][] Inputs;
+    internal int Position = -1;
+    internal ToolCycle(List<ToolBinding> tools)
+    {
+        Tools = tools; Chords = new KeyChord[tools.Count]; Inputs = new Native.INPUT[tools.Count][];
+        for (int i = 0; i < tools.Count; i++) { Chords[i] = KeyChord.Parse(tools[i].Shortcut); Inputs[i] = InputBuilder.Build(Chords[i]); }
+    }
+    internal int Index(int key, int modifiers)
+    {
+        for (int i = 0; i < Chords.Length; i++) if (Chords[i].Key == key && Chords[i].Modifiers == modifiers) return i;
+        return -1;
+    }
+    internal int Next(int direction) { return MainForm.NextIndex(Position, direction, Tools.Count); }
+    internal string Name { get { return Position < 0 ? "unknown" : Tools[Position].Name; } }
+    internal static void SelfTest()
+    {
+        AppSettings s = AppSettings.Defaults();
+        s.Modifiers[1].Tools = new List<ToolBinding> { new ToolBinding { Name = "Fill", Shortcut = "F1" }, new ToolBinding { Name = "Brush", Shortcut = "4" } };
+        s.Modifiers[2].Tools = new List<ToolBinding> { new ToolBinding { Name = "Select", Shortcut = "9" } };
+        s.Validate(); var cycles = new List<ToolCycle>();
+        foreach (ModifierBinding p in s.Modifiers) cycles.Add(new ToolCycle(p.Tools));
+        cycles[0].Position = cycles[0].Next(1); cycles[0].Position = cycles[0].Next(1);
+        cycles[1].Position = cycles[1].Next(-1); cycles[2].Position = cycles[2].Next(1);
+        if (cycles[0].Position != 1 || cycles[1].Position != 1 || cycles[2].Position != 0) throw new Exception("Independent cycle anchors.");
+        cycles[1].Position = cycles[1].Next(1);
+        if (cycles[1].Position != 0 || cycles[0].Position != 1 || cycles[2].Position != 0) throw new Exception("Cycling moved another profile.");
+        cycles[0].Position = cycles[0].Next(1);
+        if (cycles[0].Position != 2) throw new Exception("Switching cycles lost the previous position.");
+        if (cycles[0].Index(0x70, 0) != 9 || cycles[1].Index(0x70, 0) != 0 || cycles[2].Index(0x70, 0) != -1) throw new Exception("Per-cycle shortcut matching.");
+        var copy = s.Clone(); copy.Validate();
+        if (copy.Modifiers[1].Tools.Count != 2 || copy.Modifiers[2].Tools.Count != 1) throw new Exception("Separate cycles were not saved.");
+        // Migration preserves order/shortcuts but creates independent objects.
+        s = AppSettings.Defaults(); s.Tools = s.Modifiers[0].Tools;
+        foreach (ModifierBinding p in s.Modifiers) p.Tools = null;
+        s.MigrateCycles(); s.Modifiers[0].Tools[0].Name = "Changed";
+        if (s.Modifiers[1].Tools[0].Name != "Pen" || s.Modifiers[2].Tools.Count != 20 || s.Tools != null) throw new Exception("Legacy cycle migration.");
+    }
+}
+
 internal sealed class GestureBank
 {
     internal RuntimeProfile[] Profiles;

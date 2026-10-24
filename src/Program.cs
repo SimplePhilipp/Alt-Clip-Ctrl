@@ -21,7 +21,7 @@ internal static class Program
             if (test)
             {
                 MainForm.SelfTest();
-                File.WriteAllText(args[1], "PASS: config validation/serialization, three modifier profiles, disable switches, native holds, custom bindings, gesture regressions, key tracking and output modifiers.\r\n");
+                File.WriteAllText(args[1], "PASS: three independent cycles, per-cycle lists/positions, legacy XML migration, config round-trip, modifier routing, disable switches, native holds, gesture regressions and output modifiers.\r\n");
                 return 0;
             }
             bool first;
@@ -39,7 +39,7 @@ internal static class Program
                         var timer = new System.Windows.Forms.Timer { Interval = 350 };
                         timer.Tick += delegate {
                             timer.Stop(); form.VerifyConfigUi(args[1]);
-                            File.WriteAllText(args[1], "PASS: main/config UI, no Match tracker button, icon/tray, listener setup, notation tabs and clean shutdown.\r\n");
+                            File.WriteAllText(args[1], "PASS: seven config tabs, independent cycle editing/reloading, removed buttons, icon/tray, listener setup and close-to-exit shutdown.\r\n");
                             timer.Dispose(); form.Close();
                             if (!form.IsDisposed) throw new Exception("Closing the main window did not exit.");
                         };
@@ -66,8 +66,7 @@ internal sealed class MainForm : Form
     private readonly string settingsPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "AltClipCtrl.settings.xml");
     private AppSettings config;
     private GestureBank gestures;
-    private KeyChord[] toolChords;
-    private Native.INPUT[][] toolInputs;
+    private ToolCycle[] cycles;
     private readonly KeySnapshot keys = new KeySnapshot();
     private readonly Label summary = new Label(), status = new Label(), tracked = new Label();
     private readonly NotifyIcon tray = new NotifyIcon();
@@ -79,7 +78,6 @@ internal sealed class MainForm : Form
     private IntPtr foregroundHook, keyboardHook, mouseHook, activeWindow;
     private bool paused, uiDirty;
     private uint lastUi;
-    private int position = -1;
     private const int ReleaseMessage = 0x8001, TrackMessage = 0x8002, CycleMessage = 0x8003, OutputMessage = 0x8005;
 
     internal MainForm(bool diagnostic)
@@ -99,7 +97,7 @@ internal sealed class MainForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         summary.SetBounds(22, 20, 556, 55);
         status.SetBounds(22, 84, 556, 44);
-        tracked.SetBounds(22, 135, 556, 28); tracked.AutoEllipsis = true;
+        tracked.SetBounds(22, 126, 556, 50); tracked.AutoEllipsis = true;
         var explanation = new Label {
             Text = "Direct tool shortcuts keep tracking in sync. After choosing a tool\r\nwith the mouse, press its configured shortcut to resync.",
             Location = new Point(22, 171), Size = new Size(556, 48)
@@ -113,7 +111,7 @@ internal sealed class MainForm : Form
         Controls.AddRange(new Control[] { summary, status, tracked, explanation, notation, configure });
         trayMenu.Items.Add("Open Alt Clip Ctrl", null, delegate { ShowControls(); });
         trayMenu.Items.Add("Config", null, delegate { OpenConfig(); });
-        trayMenu.Items.Add("Forget tracked position", null, delegate { position = -1; UpdateUi(); });
+        trayMenu.Items.Add("Forget all cycle positions", null, delegate { ResetPositions(); UpdateUi(); });
         var pause = new ToolStripMenuItem("Pause") { CheckOnClick = true };
         pause.CheckedChanged += delegate { paused = pause.Checked; RefreshScope(); };
         trayMenu.Items.Add(pause); trayMenu.Items.Add("Exit", null, delegate { Quit(); });
@@ -124,7 +122,7 @@ internal sealed class MainForm : Form
         gestureClock.Tick += delegate {
             if (activeWindow == IntPtr.Zero || paused || testMode || Native.GetForegroundWindow() != activeWindow) { gestures.Reset(); return; }
             int tap = gestures.Poll(Native.GetTickCount());
-            if (tap >= 0) SendOutput(gestures.Profiles[tap].Tap, false, true);
+            if (tap >= 0) SendOutput(tap, gestures.Profiles[tap].Tap, false, true);
             uint now = Native.GetTickCount();
             if (uiDirty && unchecked(now - lastUi) >= 40) { UpdateUi(); lastUi = now; }
         };
@@ -132,9 +130,9 @@ internal sealed class MainForm : Form
 
     private void ApplyConfig(AppSettings value)
     {
-        value.Validate(); config = value; gestures = new GestureBank(config); position = -1;
-        toolChords = new KeyChord[config.Tools.Count]; toolInputs = new Native.INPUT[config.Tools.Count][];
-        for (int i = 0; i < toolChords.Length; i++) { toolChords[i] = KeyChord.Parse(config.Tools[i].Shortcut); toolInputs[i] = InputBuilder.Build(toolChords[i]); }
+        value.Validate(); config = value; gestures = new GestureBank(config);
+        cycles = new ToolCycle[config.Modifiers.Count];
+        for (int i = 0; i < cycles.Length; i++) cycles[i] = new ToolCycle(config.Modifiers[i].Tools);
         string enabled = "";
         foreach (ModifierBinding p in config.Modifiers) if (p.Enabled) enabled += (enabled.Length == 0 ? "" : ", ") + p.Modifier;
         summary.Text = "Enabled modifiers: " + (enabled.Length == 0 ? "none" : enabled) + "\r\nOpen Config to change inputs, outputs, timings, or enable switches.";
@@ -155,9 +153,11 @@ internal sealed class MainForm : Form
     private void UpdateUi()
     {
         uiDirty = false;
-        string name = position >= 0 && position < config.Tools.Count ? config.Tools[position].Name : "unknown";
-        tracked.Text = "Tracked tool: " + name;
-        tray.Text = "Alt Clip Ctrl: " + (name.Length > 42 ? name.Substring(0, 42) : name);
+        string names = "";
+        for (int i = 0; i < cycles.Length; i++) names += (i == 0 ? "" : "   |   ") + config.Modifiers[i].Modifier + ": " + cycles[i].Name;
+        tracked.Text = "Cycle positions\r\n" + names;
+        string trayText = "Alt Clip Ctrl: " + names;
+        tray.Text = trayText.Length > 63 ? trayText.Substring(0, 60) + "..." : trayText;
         int owner = gestures.DialOwner;
         status.Text = paused ? "Paused from the tray menu." : !config.Enabled ? "Disabled in Config." : activeWindow == IntPtr.Zero ?
             (config.DetectClipStudio ? "Waiting for Clip Studio Paint to become active." : "Controls excluded; switch to another app to use bindings.") : owner >= 0 ?
@@ -231,14 +231,17 @@ internal sealed class MainForm : Form
         GestureResult result = gestures.Handle(key, down, keys);
         if (down && (result.Action & GestureAction.Consume) == 0)
         {
-            int index = ToolIndex((int)key.vkCode, modifiers);
-            if (index >= 0) Native.PostMessage(Handle, TrackMessage, new IntPtr(index), activeWindow);
+            for (int p = 0; p < cycles.Length; p++)
+            {
+                int index = cycles[p].Index((int)key.vkCode, modifiers);
+                if (index >= 0) Native.PostMessage(Handle, TrackMessage, new IntPtr(p * 64 + index), activeWindow);
+            }
         }
         if (!(capturedBefore && gestures.Captured((int)key.vkCode))) keys.Set((int)key.vkCode, down);
         if ((result.Action & GestureAction.ReleaseModifier) != 0)
             if (!Native.PostMessage(Handle, ReleaseMessage, new IntPtr(key.vkCode), activeWindow)) { gestures.Reset(); return Native.CallNextHookEx(keyboardHook, code, message, data); }
-        if ((result.Action & GestureAction.Next) != 0) Native.PostMessage(Handle, CycleMessage, new IntPtr(1), activeWindow);
-        if ((result.Action & GestureAction.Previous) != 0) Native.PostMessage(Handle, CycleMessage, new IntPtr(-1), activeWindow);
+        if ((result.Action & GestureAction.Next) != 0) Native.PostMessage(Handle, CycleMessage, new IntPtr(result.Profile * 2), activeWindow);
+        if ((result.Action & GestureAction.Previous) != 0) Native.PostMessage(Handle, CycleMessage, new IntPtr(result.Profile * 2 + 1), activeWindow);
         if ((result.Action & GestureAction.HoldForward) != 0) Native.PostMessage(Handle, OutputMessage, new IntPtr(result.Profile * 2), activeWindow);
         if ((result.Action & GestureAction.HoldBackward) != 0) Native.PostMessage(Handle, OutputMessage, new IntPtr(result.Profile * 2 + 1), activeWindow);
         if (ownerBefore != gestures.DialOwner) uiDirty = true;
@@ -257,24 +260,21 @@ internal sealed class MainForm : Form
         }
         return Native.CallNextHookEx(mouseHook, code, message, data);
     }
-    private int ToolIndex(int key, int modifiers)
-    {
-        for (int i = 0; i < toolChords.Length; i++) if (toolChords[i].Key == key && toolChords[i].Modifiers == modifiers) return i;
-        return -1;
-    }
+    private void ResetPositions() { if (cycles != null) foreach (ToolCycle c in cycles) c.Position = -1; }
     private bool ValidTarget(IntPtr target)
     { return !paused && !testMode && config.Enabled && target != IntPtr.Zero && target == activeWindow && target == Native.GetForegroundWindow(); }
     protected override void WndProc(ref Message m)
     {
         if (m.Msg == ReleaseMessage) { ReleaseModifier((ushort)m.WParam.ToInt32()); return; }
         if (m.Msg == TrackMessage)
-        { int i = m.WParam.ToInt32(); if (ValidTarget(m.LParam) && i >= 0 && i < config.Tools.Count) { position = i; uiDirty = true; } return; }
-        if (m.Msg == CycleMessage) { if (ValidTarget(m.LParam)) Step(m.WParam.ToInt32()); return; }
+        { int encoded = m.WParam.ToInt32(), p = encoded / 64, i = encoded % 64;
+          if (ValidTarget(m.LParam) && p >= 0 && p < cycles.Length && i >= 0 && i < cycles[p].Tools.Count) { cycles[p].Position = i; uiDirty = true; } return; }
+        if (m.Msg == CycleMessage) { int encoded = m.WParam.ToInt32(); if (ValidTarget(m.LParam)) Step(encoded / 2, encoded % 2 == 0 ? 1 : -1); return; }
         if (m.Msg == OutputMessage)
         {
             int encoded = m.WParam.ToInt32(), profile = encoded / 2;
             if (ValidTarget(m.LParam) && profile >= 0 && profile < gestures.Profiles.Length)
-                SendOutput(encoded % 2 == 0 ? gestures.Profiles[profile].Forward : gestures.Profiles[profile].Backward, gestures.DialOwner < 0, false);
+                SendOutput(profile, encoded % 2 == 0 ? gestures.Profiles[profile].Forward : gestures.Profiles[profile].Backward, gestures.DialOwner < 0, false);
             return;
         }
         base.WndProc(ref m);
@@ -286,26 +286,27 @@ internal sealed class MainForm : Form
         if (mask) input.Add(InputBuilder.Key(0xA2, false)); input.Add(InputBuilder.Key(key, true)); if (mask) input.Add(InputBuilder.Key(0xA2, true));
         Native.SendInput((uint)input.Count, input.ToArray(), Marshal.SizeOf(typeof(Native.INPUT)));
     }
-    private void SendOutput(KeyChord chord, bool restore, bool tap)
+    private void SendOutput(int profile, KeyChord chord, bool restore, bool tap)
     {
         if (!ValidTarget(activeWindow)) return;
         ushort[] held = InputBuilder.HeldModifiers();
         if (tap && held.Length != 0) return;
         Native.INPUT[] input = held.Length == 0 ? InputBuilder.Build(chord) : InputBuilder.WithHeld(chord, held, restore);
         if (!Send(input)) return;
-        int tool = ToolIndex(chord.Key, chord.Modifiers);
-        if (tool >= 0) position = tool; else if (tap) position = -1;
+        int tool = cycles[profile].Index(chord.Key, chord.Modifiers);
+        if (tool >= 0) cycles[profile].Position = tool; else if (tap) cycles[profile].Position = -1;
         uiDirty = true;
     }
-    private void Step(int direction)
+    private void Step(int profile, int direction)
     {
-        if (!ValidTarget(activeWindow)) return;
+        if (!ValidTarget(activeWindow) || profile < 0 || profile >= cycles.Length || !config.Modifiers[profile].Enabled) return;
         int owner = gestures.DialOwner;
         int otherModifiers = keys.ModifierFlags;
         if (owner >= 0) otherModifiers &= ~KeyChord.FamilyFlag(gestures.Profiles[owner].State.Family);
         if (otherModifiers != 0) return;
-        int next = NextIndex(position, direction, config.Tools.Count);
-        if (Send(toolInputs[next])) { position = next; uiDirty = true; }
+        ToolCycle cycle = cycles[profile];
+        int next = cycle.Next(direction);
+        if (Send(cycle.Inputs[next])) { cycle.Position = next; uiDirty = true; }
     }
     private bool Send(Native.INPUT[] input)
     {
@@ -315,7 +316,7 @@ internal sealed class MainForm : Form
         var release = new List<Native.INPUT>();
         foreach (Native.INPUT item in input) if ((item.data.ki.dwFlags & 2) == 0) release.Add(InputBuilder.Key(item.data.ki.wVk, true));
         if (release.Count > 0) Native.SendInput((uint)release.Count, release.ToArray(), Marshal.SizeOf(typeof(Native.INPUT)));
-        position = -1; uiDirty = true; status.Text = "Windows blocked input. Keep both apps at normal privileges."; return false;
+        ResetPositions(); uiDirty = true; status.Text = "Windows blocked input. Keep both apps at normal privileges."; return false;
     }
     internal static int NextIndex(int current, int direction, int count)
     { return current < 0 ? (direction > 0 ? 0 : count - 1) : (current + direction + count) % count; }
@@ -339,7 +340,7 @@ internal sealed class MainForm : Form
     }
     internal static void SelfTest()
     {
-        AppSettings.SelfTest(); ModifierGestures.SelfTest(); KeySnapshot.SelfTest(); GestureBank.SelfTest(); InputBuilder.SelfTest();
+        AppSettings.SelfTest(); ModifierGestures.SelfTest(); KeySnapshot.SelfTest(); GestureBank.SelfTest(); InputBuilder.SelfTest(); ToolCycle.SelfTest();
         foreach (int count in new int[] { 1, 2, 20, 64 })
         {
             if (NextIndex(-1, 1, count) != 0 || NextIndex(-1, -1, count) != count - 1) throw new Exception("Cycle anchors.");

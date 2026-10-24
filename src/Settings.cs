@@ -23,6 +23,7 @@ public sealed class ModifierBinding
     public string HoldPreviousOutput { get; set; }
     public int TapWaitMs { get; set; }
     public int ShortPressMs { get; set; }
+    public List<ToolBinding> Tools { get; set; }
 }
 
 public sealed class AppSettings
@@ -41,10 +42,26 @@ public sealed class AppSettings
             "Fill", "Auto select", "Gradient", "Operation", "Figure", "Text", "Comic", "Ruler", "Correct line", "Move", "Eyedropper" };
         for (int i = 0; i < names.Length; i++)
             s.Tools.Add(new ToolBinding { Name = names[i], Shortcut = i < 9 ? (i + 1).ToString() : "F" + (i - 8).ToString() });
+        s.MigrateCycles();
         return s;
     }
+    // Older settings stored one shared list. Copy it once into each profile.
+    internal void MigrateCycles()
+    {
+        if (Modifiers == null) return;
+        foreach (ModifierBinding m in Modifiers)
+            if (m.Tools == null || (m.Tools.Count == 0 && Tools != null && Tools.Count > 0))
+            {
+                m.Tools = new List<ToolBinding>();
+                if (Tools != null) foreach (ToolBinding t in Tools)
+                    m.Tools.Add(new ToolBinding { Name = t.Name, Shortcut = t.Shortcut });
+            }
+        Tools = null;
+    }
+    public bool ShouldSerializeTools() { return Tools != null; }
     public void Validate()
     {
+        MigrateCycles();
         if (Modifiers == null || Modifiers.Count != 3) throw new ArgumentException("Config needs Alt, Ctrl, and Shift profiles.");
         var families = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (ModifierBinding m in Modifiers)
@@ -59,8 +76,12 @@ public sealed class AppSettings
             KeyChord.Parse(m.TapOutput); KeyChord.Parse(m.HoldNextOutput); KeyChord.Parse(m.HoldPreviousOutput);
             if (m.TapWaitMs < 20 || m.TapWaitMs > 2000 || m.ShortPressMs < 20 || m.ShortPressMs > 2000)
                 throw new ArgumentException("Timing must be between 20 and 2000 milliseconds.");
+            ValidateTools(m.Tools, m.Modifier);
         }
-        if (Tools == null || Tools.Count < 1 || Tools.Count > 64) throw new ArgumentException("Add between 1 and 64 tools.");
+    }
+    private static void ValidateTools(List<ToolBinding> Tools, string modifier)
+    {
+        if (Tools == null || Tools.Count < 1 || Tools.Count > 64) throw new ArgumentException(modifier + " cycle: add between 1 and 64 tools.");
         var shortcuts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (ToolBinding tool in Tools)
@@ -72,6 +93,7 @@ public sealed class AppSettings
     }
     public AppSettings Clone()
     {
+        MigrateCycles();
         var serializer = new XmlSerializer(typeof(AppSettings));
         using (var memory = new MemoryStream())
         {
@@ -104,13 +126,26 @@ public sealed class AppSettings
         AppSettings s = Defaults(); s.Validate();
         s.DetectClipStudio = false; s.Enabled = false;
         s.Modifiers[1].Enabled = false; s.Modifiers[2].TapOutput = "Ctrl+Shift+F4";
-        s.Tools[0].Shortcut = "Alt+P";
+        s.Modifiers[0].Tools[0].Shortcut = "Alt+P";
         AppSettings copy = s.Clone(); copy.Validate();
-        if (copy.Enabled || copy.DetectClipStudio || copy.Modifiers[1].Enabled || copy.Modifiers[2].TapOutput != "Ctrl+Shift+F4" || copy.Tools[0].Shortcut != "Alt+P")
+        if (copy.Enabled || copy.DetectClipStudio || copy.Modifiers[1].Enabled || copy.Modifiers[2].TapOutput != "Ctrl+Shift+F4" || copy.Modifiers[0].Tools[0].Shortcut != "Alt+P" || copy.Modifiers[1].Tools[0].Shortcut != "1")
             throw new Exception("Config serialization round-trip.");
-        s = Defaults(); s.Tools[1].Shortcut = s.Tools[0].Shortcut;
+        s = Defaults(); s.Modifiers[0].Tools[1].Shortcut = s.Modifiers[0].Tools[0].Shortcut;
         bool rejected = false; try { s.Validate(); } catch (ArgumentException) { rejected = true; }
         if (!rejected) throw new Exception("Duplicate tool shortcuts accepted.");
+        // Simulate an actual v1.0 XML document with a root Tools list.
+        s = Defaults(); s.Tools = s.Modifiers[0].Tools;
+        foreach (ModifierBinding profile in s.Modifiers) profile.Tools = null;
+        var serializer = new XmlSerializer(typeof(AppSettings));
+        using (var memory = new MemoryStream())
+        {
+            serializer.Serialize(memory, s); memory.Position = 0;
+            var migrated = (AppSettings)serializer.Deserialize(memory); migrated.Validate();
+            if (migrated.Modifiers[0].Tools.Count != 20 || migrated.Modifiers[1].Tools[19].Shortcut != "F11")
+                throw new Exception("Legacy XML migration lost tools.");
+            migrated.Modifiers[0].Tools[0].Shortcut = "F12";
+            if (migrated.Modifiers[2].Tools[0].Shortcut != "1") throw new Exception("Migrated cycles share objects.");
+        }
         foreach (string text in new string[] { "B", "Ctrl+Shift+F1", "Alt+Tab", "[", "]", "Space", "Shift+Plus", "Win+Left" })
         {
             KeyChord c = KeyChord.Parse(text), roundTrip = KeyChord.Parse(KeyChord.Parse(text).ToString());
