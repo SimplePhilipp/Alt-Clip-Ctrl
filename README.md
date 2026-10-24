@@ -5,7 +5,7 @@ A small Windows helper for Clip Studio Paint with configurable keyboard tap/hold
 ## Start
 
 1. Exit any older helper using its tray menu **Exit** command.
-2. Extract the release ZIP to a writable folder and run **AltClipCtrl.exe**.
+2. Download the Windows ZIP from [Releases](https://github.com/SimplePhilipp/Alt-Clip-Ctrl/releases/latest), extract it to a writable folder and run **AltClipCtrl.exe**.
 3. Click **Config** to change bindings, enable switches, timing, or tool shortcuts. Click **Save** to apply and remember changes.
 4. Minimize the window to keep the helper running. Closing the main window exits the application and removes its tray icon. **Pause** in the tray menu temporarily disables the helper.
 
@@ -86,7 +86,7 @@ Keep CSP and the helper at normal privileges; Windows may block input sent to a 
 
 ## Source and build
 
-The source package contains `src/`, `assets/`, `build.ps1`, `test.ps1`, this README, and a sample settings file. It is ready for a Git repository; no repository or remote has been created or published. Generated executables, test reports, and personal settings are excluded by `.gitignore`.
+The source package contains `src/`, `assets/`, `build.ps1`, `test.ps1`, this README, and a sample settings file. The public repository is [SimplePhilipp/Alt-Clip-Ctrl](https://github.com/SimplePhilipp/Alt-Clip-Ctrl). Generated executables, test reports, and personal settings are excluded by `.gitignore`.
 
 Build locally in PowerShell:
 
