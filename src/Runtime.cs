@@ -7,6 +7,8 @@ internal sealed class RuntimeProfile
     internal ModifierBinding Binding;
     internal ModifierGestures State;
     internal KeyChord Tap, Forward, Backward, HoldOutput, OrdinaryOutput;
+    internal KeyChord NativeModifier;
+    internal Native.INPUT[] TapInputs, ForwardInputs, BackwardInputs, ScrollForward, ScrollBackward;
 }
 
 internal struct GestureResult
@@ -21,15 +23,15 @@ internal sealed class ToolCycle
     internal readonly KeyChord[] Chords;
     internal readonly Native.INPUT[][] Inputs;
     internal int Position = -1;
+    private readonly Dictionary<int, int> shortcutIndex = new Dictionary<int, int>();
     internal ToolCycle(List<ToolBinding> tools)
     {
         Tools = tools; Chords = new KeyChord[tools.Count]; Inputs = new Native.INPUT[tools.Count][];
-        for (int i = 0; i < tools.Count; i++) { Chords[i] = KeyChord.Parse(tools[i].Shortcut); Inputs[i] = InputBuilder.Build(Chords[i]); }
+        for (int i = 0; i < tools.Count; i++) { Chords[i] = KeyChord.Parse(tools[i].Shortcut); Inputs[i] = InputBuilder.Build(Chords[i]); shortcutIndex[(Chords[i].Modifiers << 16) | Chords[i].Key] = i; }
     }
     internal int Index(int key, int modifiers)
     {
-        for (int i = 0; i < Chords.Length; i++) if (Chords[i].Key == key && Chords[i].Modifiers == modifiers) return i;
-        return -1;
+        int index; return shortcutIndex.TryGetValue((modifiers << 16) | key, out index) ? index : -1;
     }
     internal int Next(int direction) { return MainForm.NextIndex(Position, direction, Tools.Count); }
     internal string Name { get { return Position < 0 ? "unknown" : Tools[Position].Name; } }
@@ -70,6 +72,18 @@ internal sealed class GestureBank
                 Backward = KeyChord.Parse(p.HoldPreviousOutput), HoldOutput = KeyChord.ParseHold(p.DoubleHoldOutput), OrdinaryOutput = KeyChord.ParseHold(p.HoldOutput), State = new ModifierGestures(KeyChord.ModifierKey(p.Modifier),
                     KeyChord.Parse(p.NextInput).Key, KeyChord.Parse(p.PreviousInput).Key, (uint)p.TapWaitMs, (uint)p.ShortPressMs) });
         Profiles = list.ToArray();
+        foreach (RuntimeProfile p in Profiles)
+        {
+            p.NativeModifier = KeyChord.ParseHold(p.Binding.Modifier);
+            p.TapInputs = InputBuilder.Build(p.Tap); p.ForwardInputs = InputBuilder.Build(p.Forward); p.BackwardInputs = InputBuilder.Build(p.Backward);
+            p.ScrollForward = InputBuilder.DialScroll(p.Binding, 1); p.ScrollBackward = InputBuilder.DialScroll(p.Binding, -1);
+        }
+    }
+    internal bool NeedsTimer(int heldProfile)
+    {
+        for (int i = 0; i < Profiles.Length; i++)
+        { RuntimeProfile p = Profiles[i]; if (p.Binding.Enabled && (p.State.TapPending || (p.Binding.HoldMode == "Hold a key" && p.State.OrdinaryHeld && heldProfile != i))) return true; }
+        return false;
     }
     internal int DialOwner
     {
@@ -77,8 +91,9 @@ internal sealed class GestureBank
     }
     internal bool Captured(int key)
     {
-        int owner = DialOwner;
-        return owner >= 0 && Profiles[owner].State.IsActivation(key);
+        foreach (RuntimeProfile p in Profiles)
+            if (p.Binding.Enabled && p.State.IsActivation(key) && (p.State.DialActive || p.State.OrdinaryHeld)) return true;
+        return false;
     }
     internal void Reset() { foreach (RuntimeProfile p in Profiles) p.State.Reset(); }
     internal void CancelTap() { foreach (RuntimeProfile p in Profiles) p.State.CancelTap(); }
@@ -100,7 +115,7 @@ internal sealed class GestureBank
             bool alone = otherModifiers == 0 && !keys.MouseHeld;
             if (p.State.IsActivation((int)key.vkCode)) alone = alone && !keys.OtherKeysExcept(p.State.Family);
             GestureAction action = p.State.InputEvent(key, down, alone);
-            if (activation && down && p.Binding.HoldMode != "Original modifier") action |= GestureAction.Consume;
+            if (activation && down && p.Binding.HoldMode != "Dial modifier") action |= GestureAction.Consume;
             if (action != GestureAction.None)
             {
                 if (result.Profile >= 0 && result.Profile != i) { Reset(); return new GestureResult { Profile = -1 }; }
@@ -154,7 +169,7 @@ internal sealed class GestureBank
             g.Reset(); g.KeyEvent(vk, true, 100, true); g.KeyEvent(0x43, true, 130, true); g.KeyEvent(vk, false, 180, true);
             if (g.Poll(400)) throw new Exception("Native shortcut generated stray tap.");
         }
-        foreach (string mode in new string[] { "No action", "Cycle list", "Dial scrolling", "Hold a key" })
+        foreach (string mode in new string[] { "No action", "Dial modifier", "Cycle list", "Dial scrolling", "Hold a key" })
         {
             var settings = AppSettings.Defaults(); settings.Modifiers[1].DoubleHoldMode = mode;
             var router = new GestureBank(settings); var snapshot = new KeySnapshot();
@@ -165,17 +180,47 @@ internal sealed class GestureBank
             Route(router, snapshot, 0xDD, false, 250); Route(router, snapshot, 0xA2, false, 900);
             if (router.DialOwner != -1) throw new Exception("Tap-hold action release.");
         }
-        foreach (string mode in new string[] { "No action", "Original modifier", "Cycle list", "Dial scrolling", "Hold a key" })
+        foreach (string mode in new string[] { "No action", "Dial modifier", "Cycle list", "Dial scrolling", "Hold a key" })
         {
             var settings = AppSettings.Defaults(); settings.Modifiers[2].HoldMode = mode;
             var router = new GestureBank(settings); var snapshot = new KeySnapshot();
             GestureResult press = Route(router, snapshot, 0xA0, true, 100);
-            if (((press.Action & GestureAction.Consume) != 0) != (mode != "Original modifier")) throw new Exception("Ordinary modifier passthrough/override.");
+            if (((press.Action & GestureAction.Consume) != 0) != (mode != "Dial modifier")) throw new Exception("Ordinary modifier passthrough/override.");
             if (router.Profiles[2].State.HoldReady(400) || !router.Profiles[2].State.HoldReady(401)) throw new Exception("Ordinary hold threshold.");
             GestureResult notch = Route(router, snapshot, 0xDD, true, 450);
             if (mode == "Hold a key" ? notch.Action != GestureAction.None : (notch.Action & GestureAction.HoldForward) == 0) throw new Exception("Ordinary action routing.");
             Route(router, snapshot, 0xDD, false, 460); Route(router, snapshot, 0xA0, false, 900);
             if (router.Profiles[2].State.OrdinaryHeld || router.Poll(1100) != -1) throw new Exception("Ordinary action release/tap leakage.");
+        }
+        var timerSettings = AppSettings.Defaults(); var timerBank = new GestureBank(timerSettings); var timerKeys = new KeySnapshot();
+        if (timerBank.NeedsTimer(-1)) throw new Exception("Idle gestures requested polling.");
+        Route(timerBank, timerKeys, 0xA2, true, 100); Route(timerBank, timerKeys, 0xA2, false, 150);
+        if (!timerBank.NeedsTimer(-1)) throw new Exception("Pending tap did not request a timer.");
+        timerBank.Poll(250); if (timerBank.NeedsTimer(-1)) throw new Exception("Completed tap kept polling.");
+        timerSettings.Modifiers[1].HoldMode = "Hold a key"; timerBank.Configure(timerSettings); timerKeys.Clear();
+        Route(timerBank, timerKeys, 0xA2, true, 100);
+        if (!timerBank.NeedsTimer(-1) || timerBank.NeedsTimer(1)) throw new Exception("Held-key timer lifecycle.");
+        for (int profile = 0; profile < 3; profile++)
+        {
+            var settings = AppSettings.Defaults(); settings.Modifiers[profile].HoldMode = "Dial scrolling";
+            var router = new GestureBank(settings); var snapshot = new KeySnapshot();
+            int key = profile == 0 ? 0xA4 : profile == 1 ? 0xA2 : 0xA0;
+            Native.KBDLLHOOKSTRUCT wrappedEvent = new Native.KBDLLHOOKSTRUCT { vkCode = (uint)key, flags = 0x10, time = 100 };
+            bool captured = router.Captured(key); router.Handle(wrappedEvent, true, snapshot); if (!(captured && router.Captured(key))) snapshot.Set(key, true);
+            for (int notch = 0; notch < 1000; notch++)
+            {
+                int[] packet = { key, 0xDD, 0xDD, key }; bool[] edges = { true, true, false, false };
+                for (int e = 0; e < packet.Length; e++)
+                {
+                    wrappedEvent.vkCode = (uint)packet[e]; wrappedEvent.time++;
+                    captured = router.Captured(packet[e]); GestureResult result = router.Handle(wrappedEvent, edges[e], snapshot);
+                    if (!(captured && router.Captured(packet[e]))) snapshot.Set(packet[e], edges[e]);
+                    if (e == 1 && (result.Action & GestureAction.HoldForward) == 0) throw new Exception("Lost wrapped ordinary scrolling notch.");
+                }
+                if (!snapshot.IsDown(key) || !router.Profiles[profile].State.OrdinaryHeld) throw new Exception("Nested modifier packet ended the held gesture.");
+            }
+            wrappedEvent.vkCode = (uint)key; wrappedEvent.time++; router.Handle(wrappedEvent, false, snapshot);
+            if (router.Profiles[profile].State.OrdinaryHeld) throw new Exception("Wrapped ordinary scrolling release.");
         }
         AppSettings s = AppSettings.Defaults();
         foreach (ModifierBinding p in s.Modifiers) p.Enabled = false;
@@ -199,6 +244,14 @@ internal sealed class GestureBank
 
 internal static class InputBuilder
 {
+    internal static Native.INPUT[] DialScroll(ModifierBinding binding, int direction)
+    {
+        int family = KeyChord.ModifierKey(binding.Modifier);
+        ushort first = family == 0x12 ? (ushort)0xA4 : family == 0x11 ? (ushort)0xA2 : (ushort)0xA0;
+        // The controller's activation modifier must not turn wheel input into
+        // Ctrl+wheel zoom or Shift+wheel horizontal scrolling.
+        return WithHeld(ScrollOutput(binding, direction), new ushort[] { first, (ushort)(first + 1) }, false);
+    }
     internal static KeyChord ScrollOutput(ModifierBinding binding, int direction)
     { if (binding.ReverseScroll) direction = -direction; return new KeyChord { Key = direction > 0 ? KeyChord.WheelUp : KeyChord.WheelDown, WheelNotches = binding.ScrollAmount }; }
     internal static int OutputModifiers(KeyChord chord)
@@ -278,6 +331,23 @@ internal static class InputBuilder
     }
     internal static void SelfTest()
     {
+        foreach (string name in new string[] { "Alt", "Ctrl", "Shift" })
+        {
+            ModifierBinding binding = AppSettings.Defaults().Modifiers.Find(delegate(ModifierBinding p) { return p.Modifier == name; });
+            foreach (int direction in new int[] { -1, 1 })
+            {
+                var down = new HashSet<ushort>();
+                int family = KeyChord.ModifierKey(name); ushort first = family == 0x12 ? (ushort)0xA4 : family == 0x11 ? (ushort)0xA2 : (ushort)0xA0;
+                down.Add(first); down.Add((ushort)(first + 1)); int wheels = 0;
+                foreach (Native.INPUT input in DialScroll(binding, direction))
+                {
+                    if (input.type == 0)
+                    { if (down.Count != 0 || input.data.mi.mouseData != (direction > 0 ? 120u : unchecked((uint)-120))) throw new Exception("Wheel carried an activation modifier."); wheels++; }
+                    else if ((input.data.ki.dwFlags & 2) != 0) down.Remove(input.data.ki.wVk); else down.Add(input.data.ki.wVk);
+                }
+                if (wheels != 1 || down.Count != 0) throw new Exception("Wheel envelope imbalance.");
+            }
+        }
         KeyChord none = KeyChord.Parse("No action");
         if (!none.IsNone || Build(none).Length != 0 || WithHeld(none, new ushort[] { 0xA4, 0xA2 }, true).Length != 0)
             throw new Exception("No action emitted input.");

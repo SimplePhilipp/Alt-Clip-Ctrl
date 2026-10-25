@@ -58,10 +58,12 @@ public sealed class AppSettings
         if (Modifiers == null) return;
         foreach (ModifierBinding m in Modifiers)
         {
+            if (m.HoldMode == "Original modifier") m.HoldMode = "Dial modifier";
+            if (m.DoubleHoldMode == "Original modifier") m.DoubleHoldMode = "Dial modifier";
             if (m.ScrollAmount == 0) m.ScrollAmount = 1;
             if (string.IsNullOrEmpty(m.DoubleHoldMode)) m.DoubleHoldMode = "Cycle list";
             if (string.IsNullOrEmpty(m.DoubleHoldOutput)) m.DoubleHoldOutput = "Space";
-            if (string.IsNullOrEmpty(m.HoldMode)) m.HoldMode = "Original modifier";
+            if (string.IsNullOrEmpty(m.HoldMode)) m.HoldMode = "Dial modifier";
             if (string.IsNullOrEmpty(m.HoldOutput)) m.HoldOutput = m.Modifier;
             if (m.Tools == null || (m.Tools.Count == 0 && Tools != null && Tools.Count > 0))
             {
@@ -81,10 +83,10 @@ public sealed class AppSettings
         foreach (ModifierBinding m in Modifiers)
         {
             int family = KeyChord.ModifierKey(m.Modifier);
-            if (m.DoubleHoldMode != "No action" && m.DoubleHoldMode != "Cycle list" && m.DoubleHoldMode != "Dial scrolling" && m.DoubleHoldMode != "Hold a key")
+            if (m.DoubleHoldMode != "Dial modifier" && m.DoubleHoldMode != "No action" && m.DoubleHoldMode != "Cycle list" && m.DoubleHoldMode != "Dial scrolling" && m.DoubleHoldMode != "Hold a key")
                 throw new ArgumentException(m.Modifier + ": choose a valid tap-hold action.");
             KeyChord.ParseHold(m.DoubleHoldOutput);
-            if (m.HoldMode != "No action" && m.HoldMode != "Original modifier" && m.HoldMode != "Cycle list" && m.HoldMode != "Dial scrolling" && m.HoldMode != "Hold a key")
+            if (m.HoldMode != "No action" && m.HoldMode != "Dial modifier" && m.HoldMode != "Cycle list" && m.HoldMode != "Dial scrolling" && m.HoldMode != "Hold a key")
                 throw new ArgumentException(m.Modifier + ": choose a valid hold action.");
             KeyChord.ParseHold(m.HoldOutput);
             if (m.ScrollAmount < 1 || m.ScrollAmount > 20) throw new ArgumentException("Scroll amount must be between 1 and 20 notches.");
@@ -94,6 +96,7 @@ public sealed class AppSettings
                 throw new ArgumentException(m.Modifier + ": rotation inputs must be two different single keys.");
             if (KeyChord.InFamily(next.Key, family) || KeyChord.InFamily(previous.Key, family))
                 throw new ArgumentException(m.Modifier + ": a rotation input cannot be the activation modifier.");
+            if (KeyChord.Parse(m.TapOutput).IsWheel) throw new ArgumentException(m.Modifier + ": Tap accepts a key/shortcut or No action, not scrolling.");
             KeyChord.Parse(m.TapOutput); KeyChord.Parse(m.HoldNextOutput); KeyChord.Parse(m.HoldPreviousOutput);
             if (m.TapWaitMs < 20 || m.TapWaitMs > 2000 || m.ShortPressMs < 20 || m.ShortPressMs > 2000)
                 throw new ArgumentException("Timing must be between 20 and 2000 milliseconds.");
@@ -128,6 +131,8 @@ public sealed class AppSettings
         using (XmlReader reader = XmlReader.Create(path, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null }))
         {
             var result = (AppSettings)new XmlSerializer(typeof(AppSettings)).Deserialize(reader);
+            foreach (ModifierBinding p in result.Modifiers)
+                if (KeyChord.Parse(p.TapOutput).IsWheel) p.TapOutput = "No action";
             result.Validate(); return result;
         }
     }

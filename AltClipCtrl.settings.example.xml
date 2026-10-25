@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <AppSettings xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <Enabled>true</Enabled>
   <DetectClipStudio>true</DetectClipStudio>
@@ -95,7 +95,7 @@
           <Shortcut>F11</Shortcut>
         </ToolBinding>
       </Tools>
-      <HoldMode>Original modifier</HoldMode>
+      <HoldMode>Dial modifier</HoldMode>
       <HoldOutput>Alt</HoldOutput>
       <DoubleHoldMode>Cycle list</DoubleHoldMode>
       <DoubleHoldOutput>Space</DoubleHoldOutput>
@@ -194,7 +194,7 @@
           <Shortcut>F11</Shortcut>
         </ToolBinding>
       </Tools>
-      <HoldMode>Original modifier</HoldMode>
+      <HoldMode>Dial modifier</HoldMode>
       <HoldOutput>Ctrl</HoldOutput>
       <DoubleHoldMode>Cycle list</DoubleHoldMode>
       <DoubleHoldOutput>Space</DoubleHoldOutput>
@@ -293,7 +293,7 @@
           <Shortcut>F11</Shortcut>
         </ToolBinding>
       </Tools>
-      <HoldMode>Original modifier</HoldMode>
+      <HoldMode>Dial modifier</HoldMode>
       <HoldOutput>Shift</HoldOutput>
       <DoubleHoldMode>Cycle list</DoubleHoldMode>
       <DoubleHoldOutput>Space</DoubleHoldOutput>

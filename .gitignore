@@ -7,3 +7,4 @@ AltClipCtrl.settings.xml
 *.user
 *.suo
 outputs/
+work/

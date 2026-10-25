@@ -21,7 +21,7 @@ internal static class Program
             if (test)
             {
                 MainForm.SelfTest();
-                File.WriteAllText(args[1], "PASS: No action parsing/output suppression/settings round-trip, legacy profile removal, three independent cycles, scrolling and gesture regressions.\r\n");
+                File.WriteAllText(args[1], "PASS: identical hold modes, idle timer demand, 3000 wrapped ordinary turns, modifier-free cached wheel output, migration and gesture regressions.\r\n");
                 return 0;
             }
             bool first;
@@ -39,7 +39,7 @@ internal static class Program
                         var timer = new System.Windows.Forms.Timer { Interval = 350 };
                         timer.Tick += delegate {
                             timer.Stop(); form.VerifyConfigUi(args[1]);
-                            File.WriteAllText(args[1], "PASS: three Config tabs, No action for every gesture, adaptive controls/previews, unsaved changes, held-output cleanup and shutdown.\r\n");
+                            File.WriteAllText(args[1], "PASS: plain-language UI, no tap scrolling, identical hold choices including Dial modifier, idle fast timer stopped, held-output cleanup and shutdown.\r\n");
                             timer.Dispose(); form.Close();
                             if (!form.IsDisposed) throw new Exception("Closing the main window did not exit.");
                             form.VerifyReleasedOutputs();
@@ -79,6 +79,8 @@ internal sealed class MainForm : Form
     private IntPtr foregroundHook, keyboardHook, mouseHook, activeWindow;
     private bool paused, uiDirty;
     private uint lastUi;
+    private uint checkedProcess;
+    private bool checkedIsCsp;
     private KeyChord heldOutput;
     private readonly List<Native.INPUT> diagnosticInputs = new List<Native.INPUT>();
     private int heldProfile = -1;
@@ -109,7 +111,7 @@ internal sealed class MainForm : Form
             Location = new Point(22, 171), Size = new Size(556, 48)
         };
         var notation = new Label {
-            Text = "- = tap: press and release     _ = hold: keep pressed\r\n-_Alt = tap Alt, release, then press and hold Alt again.\r\n+ joins keys: _Ctrl + ] means hold Ctrl and press ].",
+            Text = "Tap: press and release. Hold: keep the button pressed.\r\nTap then hold: tap, release, then press and keep holding.\r\nChoose each gesture's action in Config.",
             Location = new Point(22, 226), Size = new Size(556, 77)
         };
         var configure = new Button { Text = "Config", Location = new Point(22, 327), Size = new Size(160, 38) };
@@ -123,20 +125,21 @@ internal sealed class MainForm : Form
         trayMenu.Items.Add(pause); trayMenu.Items.Add("Exit", null, delegate { Quit(); });
         tray.Icon = Icon; tray.ContextMenuStrip = trayMenu; tray.DoubleClick += delegate { ShowControls(); }; tray.Visible = true;
         ApplyConfig(config);
-        scopeClock.Interval = 500; scopeClock.Tick += delegate { RefreshScope(); };
+        scopeClock.Interval = 1000; scopeClock.Tick += delegate { RefreshScope(); };
         gestureClock.Interval = 15;
         gestureClock.Tick += delegate {
-            if (activeWindow == IntPtr.Zero || paused || testMode || Native.GetForegroundWindow() != activeWindow) { EndCustomHold(); gestures.Reset(); return; }
+            if (activeWindow == IntPtr.Zero || paused || testMode || Native.GetForegroundWindow() != activeWindow) { EndCustomHold(); gestures.Reset(); gestureClock.Stop(); return; }
+            uint now = Native.GetTickCount();
             for (int i = 0; i < gestures.Profiles.Length; i++)
             {
                 RuntimeProfile p = gestures.Profiles[i];
-                if (p.Binding.Enabled && p.Binding.HoldMode == "Hold a key" && p.State.HoldReady(Native.GetTickCount()) && heldOutput == null)
+                if (p.Binding.Enabled && p.Binding.HoldMode == "Hold a key" && p.State.HoldReady(now) && heldOutput == null)
                 { p.State.CancelTap(); BeginCustomHold(i, false); }
             }
-            int tap = gestures.Poll(Native.GetTickCount());
-            if (tap >= 0) SendOutput(tap, gestures.Profiles[tap].Tap, false, true);
-            uint now = Native.GetTickCount();
+            int tap = gestures.Poll(now);
+            if (tap >= 0) SendOutput(tap, gestures.Profiles[tap].Tap, false, true, gestures.Profiles[tap].TapInputs);
             if (uiDirty && unchecked(now - lastUi) >= 40) { UpdateUi(); lastUi = now; }
+            UpdateGestureTimer();
         };
     }
 
@@ -173,7 +176,7 @@ internal sealed class MainForm : Form
         int owner = gestures.DialOwner;
         status.Text = paused ? "Paused from the tray menu." : !config.Enabled ? "Disabled in Config." : activeWindow == IntPtr.Zero ?
             (config.DetectClipStudio ? "Waiting for Clip Studio Paint to become active." : "Controls excluded; switch to another app to use bindings.") : owner >= 0 ?
-            "-_" + gestures.Profiles[owner].Binding.Modifier + ": " + gestures.Profiles[owner].Binding.DoubleHoldMode + ". Release to exit." :
+            "Tap then hold " + gestures.Profiles[owner].Binding.Modifier + ": " + gestures.Profiles[owner].Binding.DoubleHoldMode + ". Release to exit." :
             (config.DetectClipStudio ? "Ready in Clip Studio Paint." : "Ready in this app. CSP auto-detection is off.");
     }
     protected override void OnLoad(EventArgs e)
@@ -182,14 +185,16 @@ internal sealed class MainForm : Form
         foregroundCallback = delegate(IntPtr h, uint ev, IntPtr w, int obj, int child, uint thread, uint time) { if (!IsDisposed && !Disposing) RefreshScope(); };
         foregroundHook = Native.SetWinEventHook(3, 3, IntPtr.Zero, foregroundCallback, 0, 0, 0);
         if (foregroundHook == IntPtr.Zero) throw new InvalidOperationException("Could not enable foreground notifications.");
-        RefreshScope(); scopeClock.Start(); gestureClock.Start();
+        RefreshScope(); scopeClock.Start();
         if (testMode) { if (!EnableHooks()) throw new InvalidOperationException("Listener setup failed."); DisableHooks(); Hide(); }
     }
-    private static bool CspIsForeground()
+    private bool CspIsForeground()
     {
         uint pid; Native.GetWindowThreadProcessId(Native.GetForegroundWindow(), out pid);
         if (pid == 0) return false;
-        try { using (Process p = Process.GetProcessById((int)pid)) return string.Equals(p.ProcessName, "CLIPStudioPaint", StringComparison.OrdinalIgnoreCase); }
+        if (pid == checkedProcess) return checkedIsCsp;
+        checkedProcess = pid; checkedIsCsp = false;
+        try { using (Process p = Process.GetProcessById((int)pid)) { checkedIsCsp = string.Equals(p.ProcessName, "CLIPStudioPaint", StringComparison.OrdinalIgnoreCase); return checkedIsCsp; } }
         catch (ArgumentException) { return false; } catch (System.ComponentModel.Win32Exception) { return false; } catch (InvalidOperationException) { return false; }
     }
     private void RefreshScope()
@@ -197,9 +202,11 @@ internal sealed class MainForm : Form
         if (IsDisposed || Disposing || !IsHandleCreated) return;
         if (paused || testMode || !config.Enabled || !TargetAllowed()) { activeWindow = IntPtr.Zero; DisableHooks(); UpdateUi(); return; }
         IntPtr current = Native.GetForegroundWindow();
+        if (activeWindow == current && keyboardHook != IntPtr.Zero && mouseHook != IntPtr.Zero) return;
         if (activeWindow != current) { EndCustomHold(); gestures.Reset(); if (keyboardHook != IntPtr.Zero) SeedKeys(); }
         activeWindow = current;
         if (!EnableHooks()) status.Text = "Input listeners unavailable. Restart the app."; else UpdateUi();
+        UpdateGestureTimer();
     }
     private bool TargetAllowed()
     {
@@ -218,6 +225,7 @@ internal sealed class MainForm : Form
     }
     private void DisableHooks()
     {
+        gestureClock.Stop();
         EndCustomHold();
         if (keyboardHook != IntPtr.Zero) Native.UnhookWindowsHookEx(keyboardHook);
         if (mouseHook != IntPtr.Zero) Native.UnhookWindowsHookEx(mouseHook);
@@ -242,7 +250,7 @@ internal sealed class MainForm : Form
         int modifiers = keys.ModifierFlags;
         if (ownerBefore >= 0) modifiers &= ~KeyChord.FamilyFlag(gestures.Profiles[ownerBefore].State.Family);
         foreach (RuntimeProfile p in gestures.Profiles)
-            if (p.Binding.Enabled && p.Binding.HoldMode != "Original modifier" && p.State.OrdinaryHeld)
+            if (p.Binding.Enabled && p.Binding.HoldMode != "Dial modifier" && p.State.OrdinaryHeld)
                 modifiers &= ~KeyChord.FamilyFlag(p.State.Family);
         if (heldOutput != null) modifiers |= InputBuilder.OutputModifiers(heldOutput);
         GestureResult result = gestures.Handle(key, down, keys);
@@ -264,15 +272,16 @@ internal sealed class MainForm : Form
         int ownerAfter = gestures.DialOwner;
         if (ownerBefore != ownerAfter)
         {
-            if (ownerBefore >= 0 && gestures.Profiles[ownerBefore].Binding.DoubleHoldMode == "Hold a key")
+            if (ownerBefore >= 0 && (gestures.Profiles[ownerBefore].Binding.DoubleHoldMode == "Hold a key" || gestures.Profiles[ownerBefore].Binding.DoubleHoldMode == "Dial modifier"))
                 Native.PostMessage(Handle, HoldStateMessage, new IntPtr(ownerBefore * 2 + 1), activeWindow);
             if (ownerAfter >= 0 && gestures.Profiles[ownerAfter].Binding.DoubleHoldMode != "Cycle list") gestures.Profiles[ownerAfter].State.CancelTap();
-            if (ownerAfter >= 0 && gestures.Profiles[ownerAfter].Binding.DoubleHoldMode == "Hold a key")
+            if (ownerAfter >= 0 && (gestures.Profiles[ownerAfter].Binding.DoubleHoldMode == "Hold a key" || gestures.Profiles[ownerAfter].Binding.DoubleHoldMode == "Dial modifier"))
                 Native.PostMessage(Handle, HoldStateMessage, new IntPtr(ownerAfter * 2), activeWindow);
             uiDirty = true;
         }
         if (heldProfile >= 0 && !heldIsDouble && !gestures.Profiles[heldProfile].State.OrdinaryHeld)
             Native.PostMessage(Handle, HoldStateMessage, new IntPtr(heldProfile * 2 + 1), activeWindow);
+        UpdateGestureTimer();
         return (result.Action & GestureAction.Consume) != 0 ? new IntPtr(1) : Native.CallNextHookEx(keyboardHook, code, message, data);
     }
     private IntPtr MouseEvent(int code, IntPtr message, IntPtr data)
@@ -288,10 +297,17 @@ internal sealed class MainForm : Form
             if (msg == 0x207 || msg == 0x208) keys.Set(4, msg == 0x207);
             if (msg == 0x20B || msg == 0x20C) keys.Set((unchecked((uint)Marshal.ReadInt32(data, 8)) >> 16) == 1 ? 5 : 6, msg == 0x20B);
             gestures.CancelTap();
+            UpdateGestureTimer();
         }
         return Native.CallNextHookEx(mouseHook, code, message, data);
     }
     private void ResetPositions() { if (cycles != null) foreach (ToolCycle c in cycles) c.Position = -1; }
+    private void UpdateGestureTimer()
+    {
+        bool needed = !testMode && activeWindow != IntPtr.Zero && !paused && (uiDirty || gestures.NeedsTimer(heldProfile));
+        if (needed) { if (!gestureClock.Enabled) gestureClock.Start(); }
+        else if (gestureClock.Enabled) gestureClock.Stop();
+    }
     private bool ValidTarget(IntPtr target)
     { return !paused && !testMode && config.Enabled && target != IntPtr.Zero && target == activeWindow && target == Native.GetForegroundWindow(); }
     protected override void WndProc(ref Message m)
@@ -306,15 +322,16 @@ internal sealed class MainForm : Form
         if (m.Msg == ReleaseMessage) { ReleaseModifier((ushort)m.WParam.ToInt32()); return; }
         if (m.Msg == TrackMessage)
         { int encoded = m.WParam.ToInt32(), p = encoded / 64, i = encoded % 64;
-          if (ValidTarget(m.LParam) && p >= 0 && p < cycles.Length && i >= 0 && i < cycles[p].Tools.Count) { cycles[p].Position = i; uiDirty = true; } return; }
+          if (ValidTarget(m.LParam) && p >= 0 && p < cycles.Length && i >= 0 && i < cycles[p].Tools.Count) { cycles[p].Position = i; uiDirty = true; UpdateGestureTimer(); } return; }
         if (m.Msg == CycleMessage) { int encoded = m.WParam.ToInt32(); if (ValidTarget(m.LParam)) Step(encoded / 2, encoded % 2 == 0 ? 1 : -1); return; }
         if (m.Msg == OutputMessage)
         {
             int encoded = m.WParam.ToInt32(), profile = encoded / 2;
             if (ValidTarget(m.LParam) && profile >= 0 && profile < gestures.Profiles.Length)
             {
-                if (gestures.Profiles[profile].Binding.HoldMode == "Original modifier")
-                    SendOutput(profile, encoded % 2 == 0 ? gestures.Profiles[profile].Forward : gestures.Profiles[profile].Backward, gestures.DialOwner < 0, false);
+                if (gestures.Profiles[profile].Binding.HoldMode == "Dial modifier")
+                    SendOutput(profile, encoded % 2 == 0 ? gestures.Profiles[profile].Forward : gestures.Profiles[profile].Backward, gestures.DialOwner < 0, false,
+                        encoded % 2 == 0 ? gestures.Profiles[profile].ForwardInputs : gestures.Profiles[profile].BackwardInputs);
                 else Step(profile, encoded % 2 == 0 ? 1 : -1, false);
             }
             return;
@@ -331,7 +348,7 @@ internal sealed class MainForm : Form
     private void BeginCustomHold(int profile, bool doubleHold = true)
     {
         EndCustomHold(); heldProfile = profile; heldIsDouble = doubleHold;
-        heldOutput = doubleHold ? gestures.Profiles[profile].HoldOutput : gestures.Profiles[profile].OrdinaryOutput;
+        heldOutput = doubleHold ? (gestures.Profiles[profile].Binding.DoubleHoldMode == "Dial modifier" ? gestures.Profiles[profile].NativeModifier : gestures.Profiles[profile].HoldOutput) : gestures.Profiles[profile].OrdinaryOutput;
         if (!Send(InputBuilder.Hold(heldOutput, false))) EndCustomHold();
     }
     private void EndCustomHold()
@@ -348,17 +365,17 @@ internal sealed class MainForm : Form
         if (mask) input.Add(InputBuilder.Key(0xA2, true));
         if (input.Count > 0) Emit(input.ToArray());
     }
-    private void SendOutput(int profile, KeyChord chord, bool restore, bool tap)
+    private void SendOutput(int profile, KeyChord chord, bool restore, bool tap, Native.INPUT[] prepared = null)
     {
         if (chord.IsNone) return;
         if (!ValidTarget(activeWindow)) return;
         ushort[] held = InputBuilder.HeldModifiers();
         if (tap && held.Length != 0) return;
-        Native.INPUT[] input = held.Length == 0 ? InputBuilder.Build(chord) : InputBuilder.WithHeld(chord, held, restore);
+        Native.INPUT[] input = held.Length == 0 ? (prepared ?? InputBuilder.Build(chord)) : InputBuilder.WithHeld(chord, held, restore);
         if (!Send(input)) return;
         int tool = cycles[profile].Index(chord.Key, chord.Modifiers);
         if (tool >= 0) cycles[profile].Position = tool; else if (tap) cycles[profile].Position = -1;
-        uiDirty = true;
+        uiDirty = true; UpdateGestureTimer();
     }
     private void Step(int profile, int direction, bool doubleHold = true)
     {
@@ -370,10 +387,12 @@ internal sealed class MainForm : Form
         if (profile < gestures.Profiles.Length) otherModifiers &= ~KeyChord.FamilyFlag(gestures.Profiles[profile].State.Family);
         if (otherModifiers != 0) return;
         if (mode == "Dial scrolling")
-        { SendOutput(profile, InputBuilder.ScrollOutput(binding, direction), false, false); return; }
+        { RuntimeProfile p = gestures.Profiles[profile]; Send(direction > 0 ? p.ScrollForward : p.ScrollBackward); return; }
+        if (mode == "Dial modifier")
+        { RuntimeProfile p = gestures.Profiles[profile]; SendOutput(profile, direction > 0 ? p.Forward : p.Backward, true, false, direction > 0 ? p.ForwardInputs : p.BackwardInputs); return; }
         ToolCycle cycle = cycles[profile];
         int next = cycle.Next(direction);
-        if (Send(cycle.Inputs[next])) { cycle.Position = next; uiDirty = true; }
+        if (Send(cycle.Inputs[next])) { cycle.Position = next; uiDirty = true; UpdateGestureTimer(); }
     }
     private bool Send(Native.INPUT[] input)
     {
@@ -406,6 +425,7 @@ internal sealed class MainForm : Form
                 throw new Exception("Removed button still present: " + c.Text);
         using (var bitmap = new Bitmap(Width, Height)) { DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size)); bitmap.Save(report + ".main.png"); }
         using (var dialog = new ConfigForm(config)) { dialog.VerifyAndRender(report); }
+        VerifyPlainLanguage(this);
         foreach (bool second in new bool[] { false, true })
         foreach (string output in new string[] { "Space", "Ctrl", "Alt", "Shift", "Ctrl+Shift+F12" })
         {
@@ -417,7 +437,15 @@ internal sealed class MainForm : Form
             BeginCustomHold(0, second); ApplyConfig(config); VerifyReleasedOutputs();
         }
         // The smoke runner closes the form next; Dispose must release this too.
+        config.Modifiers[0].DoubleHoldMode = "Dial modifier";
+        BeginCustomHold(0); EndCustomHold(); VerifyReleasedOutputs();
+        if (gestureClock.Enabled) throw new Exception("Idle diagnostic form kept its fast timer running.");
         BeginCustomHold(0);
+    }
+    private static void VerifyPlainLanguage(Control parent)
+    {
+        foreach (Control c in parent.Controls)
+        { if (c.Text.Contains("-_") || c.Text.Contains("Original modifier")) throw new Exception("Obsolete interface notation/name."); VerifyPlainLanguage(c); }
     }
     protected override void Dispose(bool disposing)
     {

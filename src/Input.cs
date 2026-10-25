@@ -77,6 +77,7 @@ internal sealed class ModifierGestures
     private bool pendingInjectedModifier;
     internal bool DialActive { get { return secondPress && heldModifier != 0 && !conflictingModifier; } }
     internal bool OrdinaryHeld { get { return !secondPress && heldModifier != 0 && !conflictingModifier; } }
+    internal bool TapPending { get { return pendingB; } }
     internal bool HoldReady(uint now) { return OrdinaryHeld && unchecked(now - started) > shortPress; }
     internal static bool IsAlt(int key) { return key == 0xA4 || key == 0xA5 || key == 0x12; }
 
@@ -143,7 +144,7 @@ internal sealed class ModifierGestures
             {
                 // A controller's Alt+bracket macro can wrap each notch in its
                 // own Alt-down/up pair while the main button remains held.
-                if (secondPress && injected) pendingInjectedModifier = true;
+                if (injected) pendingInjectedModifier = true;
                 return secondPress ? GestureAction.Consume : GestureAction.None;
             }
             if (heldModifier != 0)
@@ -161,7 +162,7 @@ internal sealed class ModifierGestures
             return secondPress ? GestureAction.Consume : GestureAction.None;
         }
         if (heldModifier != key) return GestureAction.None;
-        if (secondPress && injected)
+        if (injected)
         {
             pendingInjectedModifier = false;
             if (nestedInjectedModifier > 0) { nestedInjectedModifier--; return GestureAction.Consume; }

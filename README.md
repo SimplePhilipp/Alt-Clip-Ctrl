@@ -1,81 +1,55 @@
 # Alt Clip Ctrl
 
-A small Windows helper for Clip Studio Paint with configurable keyboard tap/hold gestures, dial tool cycling, and automatic shortcut tracking. No AutoHotkey, installer, network connection, or external packages are needed. Runs on Windows with .NET Framework 4.x.
+A standalone Windows helper for Clip Studio Paint with configurable modifier gestures, dial shortcuts, scrolling, and independent tool cycles. No AutoHotkey or installer is required.
 
 ## Start
 
-1. Exit any older helper using its tray menu **Exit** command.
-2. Download the Windows ZIP from [Releases](https://github.com/SimplePhilipp/Alt-Clip-Ctrl/releases/latest), extract it to a writable folder and run **AltClipCtrl.exe**.
-3. Click **Config** to change bindings, enable switches, timing, or tool shortcuts. Click **Save** to apply and remember changes.
-4. Minimize the window to keep the helper running. Closing the main window exits the application and removes its tray icon. **Pause** in the tray menu temporarily disables the helper.
-
-The window, tray, and executable use the custom pen-and-cycle icon.
-
-## Tap / hold notation
-
-| Notation | Meaning | Default example |
-|---|---|---|
-| `-` | Tap: press and release quickly | `-Alt` sends B |
-| `_` | Hold: keep the key pressed | `_Alt` remains normal Alt |
-| `-_` | Tap, release, then press and hold again | `-_Alt` enables dial tool cycling |
-| `+` | Press keys together | `_Alt + ]` sends F |
-
-Alt, Ctrl, and Shift have the **same gesture logic**, with independent settings. For example, `-Ctrl` is a quick Ctrl tap, `_Shift` is a normal Shift hold, and `-_Ctrl` is a Ctrl tap followed by a held second press.
-
-By default, each modifier profile is enabled and uses:
-
-| Gesture | Default result |
-|---|---|
-| `-Alt`, `-Ctrl`, or `-Shift` | B after about 100 ms |
-| `_Alt`, `_Ctrl`, or `_Shift` alone | Original modifier, unchanged |
-| Ordinary held modifier + `]` | F |
-| Ordinary held modifier + `[` | S |
-| `-_Alt`, `-_Ctrl`, or `-_Shift` | Tool cycling while the second press stays held |
-| In cycling mode: `]` / `[` | Next / previous configured tool |
-
-Use one modifier at a time for these gestures. Native combinations such as Ctrl+C, Ctrl+Shift+C, Alt+Tab, and Shift+click retain their ordinary behavior. Modifier use with another key or mouse action cancels a pending tap. Release the second held press to end cycling. Keyboard auto-repeat does not count as a new tap.
-
-The default tap wait is **100 ms**: start the second press within that window after releasing the first. B waits for the same window, preventing an extra B before cycling. The default maximum short-press duration is 300 ms. Each profile can use its own timings. Windows scheduling may add a little to the wait.
+Download the Windows ZIP from [Releases](https://github.com/SimplePhilipp/Alt-Clip-Ctrl/releases/latest), extract it to a writable folder, and run AltClipCtrl.exe. Exit the previous version first. Keep AltClipCtrl.settings.xml beside the new executable to preserve saved settings. Closing the main window exits the app; minimizing keeps it running.
 
 ## Config
 
-Config has three tabs: **Alt**, **Ctrl**, and **Shift**. The global enable switch and **Only in Clip Studio Paint** detection switch stay at the top. Turning detection off permits bindings in other foreground apps; the helper's own windows are always excluded.
+Choose the Alt, Ctrl, or Shift tab, then select Tap, Hold, or Tap then hold on the left. Only relevant controls appear on the right.
 
-Choose a gesture on the left: **Tap (-)**, **Hold (_)**, or **Tap then hold (-_)**. The right side shows only the controls for that gesture's selected action. Fixed radio-button choices replace editable action names. A sentence preview explains the result.
+- **Tap:** press and release. Choose No action or Key / shortcut. Scrolling is no longer offered for Tap.
+- **Hold:** press and keep holding.
+- **Tap then hold:** tap, release, then press and keep holding again.
 
-| Action | Relevant controls |
+Hold and Tap then hold offer exactly the same five choices:
+
+| Action | Behavior |
 | --- | --- |
-| No action (any gesture) | Sends nothing for that gesture, including its dial steps. |
-| Key / shortcut (tap) | Output and Record button; Scroll up/down are also direct choices. |
-| Original modifier (ordinary hold only, default) | Clockwise and counterclockwise outputs; keeps native Alt/Ctrl/Shift between steps. |
-| Cycle list | Editable list in the same pane, with Record, Move up/down, and Remove. |
-| Dial scrolling | Notches per step (1-20) and Reverse scroll direction. These settings are shared by scroll actions within that profile. |
-| Hold a key | Key/chord field and Record button. Space, Ctrl, Alt, Shift, and key combinations can be typed. |
+| No action | Sends nothing for that gesture, including dial turns. |
+| Dial modifier | Holds that tab's native modifier between turns; clockwise and counterclockwise inputs send the configured outputs. |
+| Cycle list | Moves through that modifier's editable list. |
+| Dial scrolling | Sends mouse-wheel input, with direction reversal and 1-20 notches per step. |
+| Hold a key | Holds the selected key or chord until release. |
 
-Dial input keys are configured on the left. **Advanced timing** is collapsed by default. It contains the tap/second-press window (100 ms default) and maximum short press (300 ms default). Custom ordinary held keys start after Maximum short press; tap-then-hold keys start on the second press. Cycle and scrolling dial steps act immediately.
+Dial modifier is the renamed Original modifier action. Older settings migrate automatically. Old Tap scroll assignments become No action; other settings are retained. The previously removed No modifier profile stays removed.
 
-The **Notation help** button explains the symbols. Save/Cancel stay visible. **Unsaved changes** marks pending edits; switching tabs or gestures keeps them. Save applies and persists them; Cancel discards them. Restore defaults fills the dialog but does not apply anything until Save. Disabled profiles can still be configured.
+The three gestures have independent action choices. Each modifier has its own cycle list and position; its dial output pair and scroll controls are shared by gestures using those actions. You can configure disabled profiles without enabling them.
 
-Choose **No action** independently for Tap (-), Hold (_), or Tap then hold (-_). Other gestures keep their own settings. A No action hold suppresses the modifier action; choose **Original modifier** to keep a native Alt/Ctrl/Shift hold. Turning off the profile enable switch instead bypasses all mappings for that modifier.
+**Advanced timing** is collapsed by default. The tap/second-press window defaults to 100 ms. Maximum short press defaults to 300 ms. A custom Hold a key action starts after Maximum short press for Hold, or on the second press for Tap then hold. Dial turns act immediately.
 
-### Scrolling, outputs, and held keys
+The input keys are configured on the left. **Set** records an input key; **Record** records an output shortcut. The cycle editor supports adding, removing, and reordering entries. The sentence preview describes the selected action. Unsaved changes remain pending while you switch tabs or gestures. Save applies and persists them; Cancel discards them. Restore defaults only applies after Save.
 
-Editable output fields accept keyboard shortcuts or **Scroll up** / **Scroll down**. WheelUp and WheelDown are accepted aliases; combinations such as Ctrl+Scroll up can be typed. Direct scroll outputs send one standard wheel notch. Dial scrolling uses its own amount and reversal controls. Rotation inputs remain keyboard keys.
+## Dial setup and scrolling
 
-Scrolling acts at the mouse pointer according to the target application's wheel handling. Hover over a slider or scrollable area before turning; wheel output does not automatically locate the color wheel.
+The controller button should send the selected modifier down when pressed and up when released. Turns should send the corresponding modifier plus the configured input key (default ] clockwise and [ counterclockwise). Use the controller button that is actually assigned to that modifier.
 
-Held key outputs are released on gesture release, focus change, pause, disabling, applying settings, or exiting. The ordinary hold defaults to Original modifier, and tap-then-hold defaults to Cycle list, preserving earlier settings.
+Software-generated input is accepted. The helper ignores only its own marked output. Repeated modifier-down/bracket/modifier-up packets from controller software retain the held gesture.
 
-Save writes AltClipCtrl.settings.xml beside the executable. Keep that file when upgrading; older settings retain their Alt/Ctrl/Shift bindings; the removed No modifier profile from v1.3.0 is ignored and omitted when saved. Keep a backup before downgrading. The example XML is not loaded automatically. No keystroke history is written.
+Scrolling acts at the mouse pointer according to the target app's normal mouse-wheel handling. Hover over a scrollable panel or slider before turning. This does not automatically locate a color wheel or make unsupported controls scrollable. Prepared scroll packets release the activation modifier before the wheel event, avoiding Ctrl+wheel zoom or Shift+wheel horizontal scrolling.
 
-## Tools and tracking
+Scroll up/down remain available as clockwise/counterclockwise outputs under Dial modifier. Direct scroll outputs send one notch; Dial scrolling uses its amount and reversal settings. Inputs remain keyboard keys. Key and shortcut text supports B, F12, Space, Ctrl+Shift+F1, Plus, Minus, and similar key names. Pure modifiers such as Ctrl or Alt can be used for Hold a key.
 
-Alt, Ctrl and Shift each use their own cycle. For example, cycling Alt to Brush, then cycling Ctrl, leaves Alt at Brush; returning to Alt continues from there. All three start with the existing 20-tool order, and can be customized independently in Config. Existing v1.0 settings are migrated automatically by copying the old list into each cycle. Saving Config writes the new format; keep a backup if you need to return to v1.0.
+## Scope and tracking
 
-Default order:
+The global enable switch and **Only in Clip Studio Paint** switch stay at the top. Turning detection off permits bindings in other foreground apps. The helper's own windows are excluded. Pause in the tray temporarily disables the helper.
+
+Default cycle order:
 
 | Shortcut | Tool | Shortcut | Tool |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 1 | Pen | F2 | Auto select |
 | 2 | Sketch | F3 | Gradient |
 | 3 | Blend | F4 | Operation |
@@ -87,50 +61,26 @@ Default order:
 | 9 | Selection area | F10 | Move |
 | F1 | Fill | F11 | Eyedropper |
 
-The app observes configured tool shortcuts used directly on your keyboard or controller, including modifier combinations. A direct shortcut updates each cycle containing that shortcut, at its own matching row. Cycling and mapped gesture outputs update only the modifier that issued them, even when another cycle contains the same shortcut. Mouse selections and unknown shortcuts cannot be identified directly: CSP does not expose its current tool through a supported simple query. After a mouse selection, press that tool's configured shortcut to resync. The old Match tracker button and menu are removed.
+Set matching shortcuts in CSP yourself and remove collisions with other CSP commands. Each list supports 1-64 unique entries. Lists wrap independently. A direct keyboard shortcut updates matching entries in all lists; generated outputs update only their originating profile.
 
-The app remembers requested selections; it cannot confirm CSP accepted them. Each cycle wraps independently. When its position is unknown, first next selects its first listed tool and first previous selects its last. An unknown tap output such as default B resets only that modifier's position; other unmapped held outputs retain its latest position. The main window shows all three cycle positions. The tray command **Forget all cycle positions** resets all three.
+CSP does not expose its current tool through a supported simple query. After selecting a tool with the mouse, press its configured shortcut to resync. The helper remembers requested selections and cannot confirm CSP accepted them. Unknown tap outputs reset that profile's tracker. No action and scrolling retain its position. The tray can forget all cycle positions.
 
-Set corresponding shortcuts in CSP yourself. Remove collisions with menu, palette, group, or individual-tool shortcuts. This helper does not change CSP settings. Use with the canvas active, outside dialogs/text editing and between brush strokes. Pause while changing CSP shortcuts. When auto-detection is off, tool tracking observes the same keys in other apps too and cannot imply CSP's active tool.
+Use shortcut actions with the canvas active, outside dialogs and text editing, and between brush strokes.
 
-## Dial and responsiveness
+## Efficiency and privacy
 
-Keep your dial button assigned to the modifier for the profile you use, and rotation to that modifier plus its configured forward/backward keys. The button should report down on pressing and up on releasing. Software-generated input is accepted; only this helper's own marked output is ignored.
+The fast gesture timer sleeps when no gesture deadline or queued interface refresh needs processing. Scrolling reuses prepared native input packets, and tool shortcut lookup uses cached indexes. Foreground process checks are cached; focus events handle app changes with a one-second fallback. UI refreshes are coalesced about 40 ms apart. No artificial delay is added to dial steps.
 
-The optimized event path retains rapid injected notches and balanced nested modifier+bracket packets. Currently held keys are cached; tool outputs are prepared in advance. Tracking updates on each step; window/tray refreshes are grouped about 40 ms apart. There is no intentional cycling delay. Unusual HID or firmware behavior still requires checking on the actual dial.
+No network code, clipboard access, keystroke history, startup entry, registry changes, or automatic updater is included. Only settings saved through Config are persisted. Temporary input listeners are removed outside the selected scope or when paused/disabled. Held outputs are released on gesture release, focus change, applying settings, pause, disable, or exit.
 
-## Privacy and limitations
+The executable is unsigned. Keep CSP and the helper at normal privileges; Windows may block input sent to a more privileged app.
 
-No network code, clipboard access, keystroke log, startup entry, registry changes, or automatic updater. Current held-key state, gestures, and the three cycle positions stay in memory. Only settings explicitly saved through Config are persisted. Temporary keyboard/mouse listeners are installed in the selected scope and removed when disabled, paused, or outside that scope.
+## Source and validation
 
-Keep CSP and the helper at normal privileges; Windows may block input sent to a more privileged app. The executable is unsigned. The icon and source are included. Exit the app and delete its files to remove it.
+The public source is [SimplePhilipp/Alt-Clip-Ctrl](https://github.com/SimplePhilipp/Alt-Clip-Ctrl). Build with build.ps1 using Microsoft's existing .NET Framework compiler. The executable is written to bin/AltClipCtrl.exe.
 
-## Source and build
-
-The source package contains `src/`, `assets/`, `build.ps1`, `test.ps1`, this README, and a sample settings file. The public repository is [SimplePhilipp/Alt-Clip-Ctrl](https://github.com/SimplePhilipp/Alt-Clip-Ctrl). Generated executables, test reports, and personal settings are excluded by `.gitignore`.
-
-Build locally in PowerShell:
-
-```powershell
-.\build.ps1
-```
-
-This uses Microsoft's .NET Framework C# compiler already on Windows and produces `bin/AltClipCtrl.exe`. No package installation or network access is used. Then run:
-
-```powershell
-.\test.ps1
-.\test.ps1 -Smoke
-```
-
-The smoke test initializes the app and Config tabs, produces preview images, and exits without sending keys. Test output goes to `test-results/`.
-
-## Verification
-
-Checked: all hold/tap-hold action choices and XML/UI round-trips; wheel direction, notch count and output tagging; held key/chord down/up balance and cleanup on release, disabling, scope changes, applying settings and shutdown using diagnostic input capture; independent cycles and migration; gesture regressions and simulated dial sequences; native modifier holds and shortcuts; custom bindings and output modifier restoration. Diagnostic tests send no real keys or scroll events.
-
-The rendered UI was visually checked. Actual selection and latency in CSP still need testing with your dial and workspace. No hardware performance result is claimed. Diagnostic command-line modes are `--self-test <report-path>` and `--smoke-test <report-path>`; the latter also writes UI previews beside its report.
+Run test.ps1 for gesture/output/config tests, or test.ps1 -Smoke for UI and cleanup checks. Diagnostic tests emit no real keyboard or scroll input. Coverage includes all gesture modes, identical hold choices, tap scrolling exclusion, idle timer demand, 3,000 wrapped ordinary dial turns across Alt/Ctrl/Shift, modifier-free wheel packets, independent cycles, migration, and held-output cleanup. UI previews were visually checked. No hardware latency or CPU percentage is claimed.
 
 ## Config preview
 
 ![Alt Clip Ctrl configuration](docs/config.png)
-
