@@ -14,6 +14,8 @@ public sealed class ToolBinding
 
 public sealed class ModifierBinding
 {
+    public bool ReverseScroll { get; set; }
+    public int ScrollAmount { get; set; }
     public string DoubleHoldMode { get; set; }
     public string DoubleHoldOutput { get; set; }
     public string HoldMode { get; set; }
@@ -35,6 +37,7 @@ public sealed class AppSettings
     public bool Enabled { get; set; }
     public bool DetectClipStudio { get; set; }
     public List<ModifierBinding> Modifiers { get; set; }
+    public ModifierBinding NoModifier { get; set; }
     public List<ToolBinding> Tools { get; set; }
     public static AppSettings Defaults()
     {
@@ -55,6 +58,7 @@ public sealed class AppSettings
         if (Modifiers == null) return;
         foreach (ModifierBinding m in Modifiers)
         {
+            if (m.ScrollAmount == 0) m.ScrollAmount = 1;
             if (string.IsNullOrEmpty(m.DoubleHoldMode)) m.DoubleHoldMode = "Cycle list";
             if (string.IsNullOrEmpty(m.DoubleHoldOutput)) m.DoubleHoldOutput = "Space";
             if (string.IsNullOrEmpty(m.HoldMode)) m.HoldMode = "Original modifier";
@@ -66,6 +70,17 @@ public sealed class AppSettings
                     m.Tools.Add(new ToolBinding { Name = t.Name, Shortcut = t.Shortcut });
             }
         }
+        if (NoModifier == null)
+        {
+            NoModifier = new ModifierBinding { Modifier = "No modifier", Enabled = false, HoldMode = "Custom outputs", HoldOutput = "Space",
+                DoubleHoldMode = "Cycle list", DoubleHoldOutput = "Space", NextInput = "]", PreviousInput = "[", TapOutput = "B",
+                HoldNextOutput = "Scroll up", HoldPreviousOutput = "Scroll down", TapWaitMs = 100, ShortPressMs = 300, ScrollAmount = 1,
+                Tools = new List<ToolBinding>() };
+            if (Modifiers.Count > 0 && Modifiers[0].Tools != null) foreach (ToolBinding t in Modifiers[0].Tools)
+                NoModifier.Tools.Add(new ToolBinding { Name = t.Name, Shortcut = t.Shortcut });
+        }
+        if (NoModifier.ScrollAmount == 0) NoModifier.ScrollAmount = 1;
+        NoModifier.Modifier = "No modifier";
         Tools = null;
     }
     public bool ShouldSerializeTools() { return Tools != null; }
@@ -83,6 +98,7 @@ public sealed class AppSettings
             if (m.HoldMode != "Original modifier" && m.HoldMode != "Cycle list" && m.HoldMode != "Dial scrolling" && m.HoldMode != "Hold a key")
                 throw new ArgumentException(m.Modifier + ": choose a valid hold action.");
             KeyChord.ParseHold(m.HoldOutput);
+            if (m.ScrollAmount < 1 || m.ScrollAmount > 20) throw new ArgumentException("Scroll amount must be between 1 and 20 notches.");
             if (!families.Add(m.Modifier)) throw new ArgumentException("Duplicate modifier profile: " + m.Modifier);
             KeyChord next = KeyChord.Parse(m.NextInput), previous = KeyChord.Parse(m.PreviousInput);
             if (next.IsWheel || previous.IsWheel || next.Modifiers != 0 || previous.Modifiers != 0 || next.Key == previous.Key)
@@ -94,6 +110,14 @@ public sealed class AppSettings
                 throw new ArgumentException("Timing must be between 20 and 2000 milliseconds.");
             ValidateTools(m.Tools, m.Modifier);
         }
+        if (NoModifier.HoldMode != "Custom outputs" && NoModifier.HoldMode != "Cycle list" && NoModifier.HoldMode != "Dial scrolling")
+            throw new ArgumentException("Choose a valid No modifier action.");
+        KeyChord bareNext = KeyChord.Parse(NoModifier.NextInput), barePrevious = KeyChord.Parse(NoModifier.PreviousInput);
+        if (bareNext.IsWheel || barePrevious.IsWheel || bareNext.Modifiers != 0 || barePrevious.Modifiers != 0 || bareNext.Key == barePrevious.Key)
+            throw new ArgumentException("No modifier needs two different single keyboard input keys.");
+        KeyChord.Parse(NoModifier.HoldNextOutput); KeyChord.Parse(NoModifier.HoldPreviousOutput);
+        if (NoModifier.ScrollAmount < 1 || NoModifier.ScrollAmount > 20) throw new ArgumentException("Scroll amount must be between 1 and 20 notches.");
+        ValidateTools(NoModifier.Tools, "No modifier");
     }
     private static void ValidateTools(List<ToolBinding> Tools, string modifier)
     {
@@ -140,6 +164,8 @@ public sealed class AppSettings
     internal static void SelfTest()
     {
         AppSettings s = Defaults(); s.Validate();
+        s.NoModifier.Enabled = true; s.NoModifier.HoldMode = "Cycle list"; s.NoModifier.ScrollAmount = 5; s.NoModifier.ReverseScroll = true;
+        s.NoModifier.Tools.RemoveAt(0);
         s.Modifiers[0].HoldMode = "Dial scrolling"; s.Modifiers[0].HoldNextOutput = "Scroll up";
         s.Modifiers[1].DoubleHoldMode = "Hold a key"; s.Modifiers[1].DoubleHoldOutput = "Ctrl";
         s.Modifiers[2].HoldMode = "Hold a key"; s.Modifiers[2].HoldOutput = "Shift+Space";
@@ -147,6 +173,8 @@ public sealed class AppSettings
         s.Modifiers[1].Enabled = false; s.Modifiers[2].TapOutput = "Ctrl+Shift+F4";
         s.Modifiers[0].Tools[0].Shortcut = "Alt+P";
         AppSettings copy = s.Clone(); copy.Validate();
+        if (!copy.NoModifier.Enabled || copy.NoModifier.HoldMode != "Cycle list" || copy.NoModifier.ScrollAmount != 5 || !copy.NoModifier.ReverseScroll || copy.NoModifier.Tools.Count != 19)
+            throw new Exception("No modifier settings round-trip.");
         if (copy.Modifiers[0].HoldMode != "Dial scrolling" || copy.Modifiers[0].HoldNextOutput != "Scroll up" || copy.Modifiers[1].DoubleHoldOutput != "Ctrl" || copy.Modifiers[2].HoldOutput != "Shift+Space")
             throw new Exception("Action/scroll settings round-trip.");
         if (copy.Enabled || copy.DetectClipStudio || copy.Modifiers[1].Enabled || copy.Modifiers[2].TapOutput != "Ctrl+Shift+F4" || copy.Modifiers[0].Tools[0].Shortcut != "Alt+P" || copy.Modifiers[1].Tools[0].Shortcut != "1")
@@ -186,6 +214,7 @@ internal sealed class KeyChord
     internal bool IsWheel { get { return Key == WheelUp || Key == WheelDown; } }
     internal const int Control = 1, Alt = 2, Shift = 4, Win = 8;
     internal ushort Key;
+    internal int WheelNotches = 1;
     internal int Modifiers;
     internal static int ModifierKey(string name)
     {

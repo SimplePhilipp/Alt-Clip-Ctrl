@@ -39,32 +39,37 @@ The default tap wait is **100 ms**: start the second press within that window af
 
 ## Config
 
-- **Enable Alt Clip Ctrl:** persistent global on/off switch.
-- **Auto-detect Clip Studio Paint:** on by default, limiting bindings to CSP. Off lets bindings work in other foreground apps too. The helper's own windows, including Config and key recording, are always excluded.
-- **Alt / Ctrl / Shift tabs:** enable or disable each modifier independently. Change forward/backward input keys, tap output, held-input outputs, timings, and the separate `_` / `-_` action selectors. Scroll the profile panel to reach timings and help.
-- **Record:** press a keyboard key or combination instead of typing its name. Rotation inputs must be single keys. Outputs support combinations such as `Ctrl+Shift+F1`. You can also type names such as `Space`, `Escape`, `Plus`, or `Minus`; Win combinations can be typed manually.
-- **Alt cycle / Ctrl cycle / Shift cycle:** three independent lists with separate remembered positions. Edit names and shortcuts, reorder rows, add rows at the bottom, or remove tools. Each list supports 1-64 tools with unique names and shortcuts within that list. Different cycles may share shortcuts.
-- **Notation:** explains `-`, `_`, `-_`, and `+` with examples.
-- **Restore defaults:** fills the dialog with defaults. Save applies them; Cancel leaves the running config unchanged.
+Config has four tabs: **Alt**, **Ctrl**, **Shift**, and **No modifier**. The global enable switch and **Only in Clip Studio Paint** detection switch stay at the top. Turning detection off permits bindings in other foreground apps; the helper's own windows are always excluded.
 
-### Hold actions and scrolling
+Choose a gesture on the left: **Tap (-)**, **Hold (_)**, or **Tap then hold (-_)**. The right side shows only the controls for that gesture's selected action. Fixed radio-button choices replace editable action names. A sentence preview explains the result.
 
-For each modifier, `_` and `-_` have independent action choices:
-
-| Action | Result |
+| Action | Relevant controls |
 | --- | --- |
-| Original modifier (`_` only, default) | Normal native Alt/Ctrl/Shift; the configured forward/backward outputs remain available. |
-| Cycle list | Turning the dial moves through that modifier's configured list. |
-| Dial scrolling | Forward sends one scroll-up notch; backward sends one scroll-down notch. |
-| Hold a key | Holds the configured key or chord until the gesture ends. Examples: Space, B, Ctrl, Alt, Shift, Ctrl+Shift+F1. |
+| Key / shortcut (tap) | Output and Record button; Scroll up/down are also direct choices. |
+| Original modifier (ordinary hold only, default) | Clockwise and counterclockwise outputs; keeps native Alt/Ctrl/Shift between steps. |
+| Cycle list | Editable list in the same pane, with Record, Move up/down, and Remove. |
+| Dial scrolling | Notches per step (1-20) and Reverse scroll direction. These settings are shared by scroll actions within that profile. |
+| Hold a key | Key/chord field and Record button. Space, Ctrl, Alt, Shift, and key combinations can be typed. |
 
-The default `-_` action remains Cycle list. Existing settings retain their previous behavior. Choosing a custom `_` action replaces that modifier's ordinary native hold. To distinguish a tap from an ordinary custom held key, that key starts after **Maximum short press** (default 300 ms). `-_` held keys start on the second press; dial steps for Cycle list / Dial scrolling act immediately. Custom held outputs are released on gesture release, focus change, pause, disabling, applying settings, or exiting the app. Ordinary native holds remain immediate in Original modifier mode.
+Dial input keys are configured on the left. **Advanced timing** is collapsed by default. It contains the tap/second-press window (100 ms default) and maximum short press (300 ms default). Custom ordinary held keys start after Maximum short press; tap-then-hold keys start on the second press. Cycle and scrolling dial steps act immediately.
 
-The tap and ordinary forward/backward output fields also offer **Scroll up** and **Scroll down** in editable dropdowns. `WheelUp` / `WheelDown` are accepted aliases; modifier combinations such as `Ctrl+Scroll up` can be typed. One output is one standard wheel notch. Rotation inputs still require keyboard keys.
+The **Notation help** button explains the symbols. Save/Cancel stay visible. **Unsaved changes** marks pending edits; switching tabs or gestures keeps them. Save applies and persists them; Cancel discards them. Restore defaults fills the dialog but does not apply anything until Save. Disabled profiles can still be configured.
 
-Scrolling acts at the mouse pointer according to the target application's wheel handling. For a color slider, hover over the slider before turning; wheel output does not automatically locate or adjust a color wheel. Example: set `_Ctrl action` to Dial scrolling and `-_Ctrl action` to Cycle list to use the same dial for both.
+### No modifier
 
-Save writes **AltClipCtrl.settings.xml** beside the executable. Keep that file when upgrading to retain your settings. No keystroke history is written. The included **AltClipCtrl.settings.example.xml** shows default settings but is not loaded automatically. If Save fails, move the app to a writable folder.
+No modifier handles turning the dial without Alt, Ctrl, Shift, or Win held. It is **disabled by default**, preserving existing keyboard behavior. Enable it explicitly and choose **Custom outputs**, **Cycle list**, or **Dial scrolling**. It has its own input keys, cycle list, remembered position, and scroll settings.
+
+For example, configure No modifier for scrolling, _Alt for native Alt, and -_Alt for a tool cycle. The controller must send the configured bare input keys (default ] clockwise and [ counterclockwise) for No modifier to apply. A controller that always wraps turns in Alt/Ctrl/Shift is still sending a modified gesture. Enabling No modifier replaces those bare key presses within the helper's active scope; modifier shortcuts remain available.
+
+### Scrolling, outputs, and held keys
+
+Editable output fields accept keyboard shortcuts or **Scroll up** / **Scroll down**. WheelUp and WheelDown are accepted aliases; combinations such as Ctrl+Scroll up can be typed. Direct scroll outputs send one standard wheel notch. Dial scrolling uses its own amount and reversal controls. Rotation inputs remain keyboard keys.
+
+Scrolling acts at the mouse pointer according to the target application's wheel handling. Hover over a slider or scrollable area before turning; wheel output does not automatically locate the color wheel.
+
+Held key outputs are released on gesture release, focus change, pause, disabling, applying settings, or exiting. The ordinary hold defaults to Original modifier, and tap-then-hold defaults to Cycle list, preserving earlier settings.
+
+Save writes AltClipCtrl.settings.xml beside the executable. Keep that file when upgrading; old settings automatically receive a disabled No modifier profile and default scroll controls. Keep a backup before downgrading. The example XML is not loaded automatically. No keystroke history is written.
 
 ## Tools and tracking
 
@@ -87,7 +92,7 @@ Default order:
 
 The app observes configured tool shortcuts used directly on your keyboard or controller, including modifier combinations. A direct shortcut updates each cycle containing that shortcut, at its own matching row. Cycling and mapped gesture outputs update only the modifier that issued them, even when another cycle contains the same shortcut. Mouse selections and unknown shortcuts cannot be identified directly: CSP does not expose its current tool through a supported simple query. After a mouse selection, press that tool's configured shortcut to resync. The old Match tracker button and menu are removed.
 
-The app remembers requested selections; it cannot confirm CSP accepted them. Each cycle wraps independently. When its position is unknown, first next selects its first listed tool and first previous selects its last. An unknown tap output such as default B resets only that modifier's position; other unmapped held outputs retain its latest position. The main window shows all three positions. The tray command **Forget all cycle positions** resets all three.
+The app remembers requested selections; it cannot confirm CSP accepted them. Each cycle wraps independently. When its position is unknown, first next selects its first listed tool and first previous selects its last. An unknown tap output such as default B resets only that modifier's position; other unmapped held outputs retain its latest position. The main window shows all four positions, including No modifier. The tray command **Forget all cycle positions** resets all four.
 
 Set corresponding shortcuts in CSP yourself. Remove collisions with menu, palette, group, or individual-tool shortcuts. This helper does not change CSP settings. Use with the canvas active, outside dialogs/text editing and between brush strokes. Pause while changing CSP shortcuts. When auto-detection is off, tool tracking observes the same keys in other apps too and cannot imply CSP's active tool.
 
@@ -99,7 +104,7 @@ The optimized event path retains rapid injected notches and balanced nested modi
 
 ## Privacy and limitations
 
-No network code, clipboard access, keystroke log, startup entry, registry changes, or automatic updater. Current held-key state, gestures, and the three cycle positions stay in memory. Only settings explicitly saved through Config are persisted. Temporary keyboard/mouse listeners are installed in the selected scope and removed when disabled, paused, or outside that scope.
+No network code, clipboard access, keystroke log, startup entry, registry changes, or automatic updater. Current held-key state, gestures, and the four cycle positions stay in memory. Only settings explicitly saved through Config are persisted. Temporary keyboard/mouse listeners are installed in the selected scope and removed when disabled, paused, or outside that scope.
 
 Keep CSP and the helper at normal privileges; Windows may block input sent to a more privileged app. The executable is unsigned. The icon and source are included. Exit the app and delete its files to remove it.
 

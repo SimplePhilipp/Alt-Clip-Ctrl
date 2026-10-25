@@ -21,7 +21,7 @@ internal static class Program
             if (test)
             {
                 MainForm.SelfTest();
-                File.WriteAllText(args[1], "PASS: hold/tap-hold modes, wheel direction/notch counts, held-key balance, config/migration, independent cycles, modifier routing and gesture regressions.\r\n");
+                File.WriteAllText(args[1], "PASS: no-modifier disabled/default, shortcut isolation/repeat handling, independent cycles, scroll amount/reversal, config migration/serialization and gesture regressions.\r\n");
                 return 0;
             }
             bool first;
@@ -39,7 +39,7 @@ internal static class Program
                         var timer = new System.Windows.Forms.Timer { Interval = 350 };
                         timer.Tick += delegate {
                             timer.Stop(); form.VerifyConfigUi(args[1]);
-                            File.WriteAllText(args[1], "PASS: action/scroll selectors, independent cycle editors, custom held-output cleanup on release/disable/focus/config/exit, UI/listeners and shutdown.\r\n");
+                            File.WriteAllText(args[1], "PASS: four-tab adaptive Config, fixed action choices, previews, unsaved changes, no-modifier round-trip, held-output cleanup, listeners and shutdown.\r\n");
                             timer.Dispose(); form.Close();
                             if (!form.IsDisposed) throw new Exception("Closing the main window did not exit.");
                             form.VerifyReleasedOutputs();
@@ -68,6 +68,11 @@ internal sealed class MainForm : Form
     private AppSettings config;
     private GestureBank gestures;
     private ToolCycle[] cycles;
+    private readonly BareDial bareDial = new BareDial();
+    private KeyChord bareForward, bareBackward;
+    private int bareNext, barePrevious;
+    private const int BareMessage = 0x8007;
+    private ModifierBinding BindingAt(int index) { return index < config.Modifiers.Count ? config.Modifiers[index] : config.NoModifier; }
     private readonly KeySnapshot keys = new KeySnapshot();
     private readonly Label summary = new Label(), status = new Label(), tracked = new Label();
     private readonly NotifyIcon tray = new NotifyIcon();
@@ -143,11 +148,14 @@ internal sealed class MainForm : Form
     private void ApplyConfig(AppSettings value)
     {
         EndCustomHold(); value.Validate(); config = value; gestures = new GestureBank(config);
-        cycles = new ToolCycle[config.Modifiers.Count];
-        for (int i = 0; i < cycles.Length; i++) cycles[i] = new ToolCycle(config.Modifiers[i].Tools);
+        cycles = new ToolCycle[config.Modifiers.Count + 1];
+        for (int i = 0; i < cycles.Length; i++) cycles[i] = new ToolCycle(BindingAt(i).Tools);
+        bareForward = KeyChord.Parse(config.NoModifier.HoldNextOutput); bareBackward = KeyChord.Parse(config.NoModifier.HoldPreviousOutput);
+        bareNext = KeyChord.Parse(config.NoModifier.NextInput).Key; barePrevious = KeyChord.Parse(config.NoModifier.PreviousInput).Key; bareDial.Reset();
         string enabled = "";
         foreach (ModifierBinding p in config.Modifiers) if (p.Enabled) enabled += (enabled.Length == 0 ? "" : ", ") + p.Modifier;
-        summary.Text = "Enabled modifiers: " + (enabled.Length == 0 ? "none" : enabled) + "\r\nOpen Config to change inputs, outputs, timings, or enable switches.";
+        if (config.NoModifier.Enabled) enabled += (enabled.Length == 0 ? "" : ", ") + "No modifier";
+        summary.Text = "Enabled profiles: " + (enabled.Length == 0 ? "none" : enabled) + "\r\nOpen Config to change inputs, outputs, timings, or enable switches.";
         UpdateUi();
     }
     private void OpenConfig()
@@ -166,9 +174,9 @@ internal sealed class MainForm : Form
     {
         uiDirty = false;
         string names = "";
-        for (int i = 0; i < cycles.Length; i++) names += (i == 0 ? "" : "   |   ") + config.Modifiers[i].Modifier + ": " + cycles[i].Name;
-        tracked.Text = "Cycle positions\r\n" + names;
-        string trayText = "Alt Clip Ctrl: " + names;
+        for (int i = 0; i < cycles.Length; i++) names += (i == 0 ? "" : i == 2 ? "\r\n" : "   |   ") + BindingAt(i).Modifier + ": " + cycles[i].Name;
+        tracked.Text = names;
+        string trayText = "Alt Clip Ctrl: " + names.Replace("\r\n", " | ");
         tray.Text = trayText.Length > 63 ? trayText.Substring(0, 60) + "..." : trayText;
         int owner = gestures.DialOwner;
         status.Text = paused ? "Paused from the tray menu." : !config.Enabled ? "Disabled in Config." : activeWindow == IntPtr.Zero ?
@@ -197,7 +205,7 @@ internal sealed class MainForm : Form
         if (IsDisposed || Disposing || !IsHandleCreated) return;
         if (paused || testMode || !config.Enabled || !TargetAllowed()) { activeWindow = IntPtr.Zero; DisableHooks(); UpdateUi(); return; }
         IntPtr current = Native.GetForegroundWindow();
-        if (activeWindow != current) { EndCustomHold(); gestures.Reset(); if (keyboardHook != IntPtr.Zero) SeedKeys(); }
+        if (activeWindow != current) { EndCustomHold(); gestures.Reset(); bareDial.Reset(); if (keyboardHook != IntPtr.Zero) SeedKeys(); }
         activeWindow = current;
         if (!EnableHooks()) status.Text = "Input listeners unavailable. Restart the app."; else UpdateUi();
     }
@@ -221,7 +229,7 @@ internal sealed class MainForm : Form
         EndCustomHold();
         if (keyboardHook != IntPtr.Zero) Native.UnhookWindowsHookEx(keyboardHook);
         if (mouseHook != IntPtr.Zero) Native.UnhookWindowsHookEx(mouseHook);
-        keyboardHook = mouseHook = IntPtr.Zero; gestures.Reset(); keys.Clear();
+        keyboardHook = mouseHook = IntPtr.Zero; gestures.Reset(); bareDial.Reset(); keys.Clear();
     }
     private void SeedKeys()
     {
@@ -246,6 +254,14 @@ internal sealed class MainForm : Form
                 modifiers &= ~KeyChord.FamilyFlag(p.State.Family);
         if (heldOutput != null) modifiers |= InputBuilder.OutputModifiers(heldOutput);
         GestureResult result = gestures.Handle(key, down, keys);
+        if (!down || (result.Action & GestureAction.Consume) == 0)
+        {
+            bool eligible = keys.ModifierFlags == 0 && heldOutput == null && !keys.MouseHeld && !keys.OtherKeysExceptDial(bareNext, barePrevious);
+            GestureAction bare = bareDial.Handle(config.NoModifier, (int)key.vkCode, down, eligible, (key.flags & 0x10) != 0);
+            if ((bare & GestureAction.Next) != 0) Native.PostMessage(Handle, BareMessage, new IntPtr(1), activeWindow);
+            if ((bare & GestureAction.Previous) != 0) Native.PostMessage(Handle, BareMessage, new IntPtr(-1), activeWindow);
+            if ((bare & GestureAction.Consume) != 0) result.Action |= GestureAction.Consume;
+        }
         if (down && (result.Action & GestureAction.Consume) == 0)
         {
             for (int p = 0; p < cycles.Length; p++)
@@ -296,6 +312,16 @@ internal sealed class MainForm : Form
     { return !paused && !testMode && config.Enabled && target != IntPtr.Zero && target == activeWindow && target == Native.GetForegroundWindow(); }
     protected override void WndProc(ref Message m)
     {
+        if (m.Msg == BareMessage)
+        {
+            if (ValidTarget(m.LParam) && config.NoModifier.Enabled && keys.ModifierFlags == 0 && heldOutput == null)
+            {
+                int direction = m.WParam.ToInt32();
+                if (config.NoModifier.HoldMode == "Custom outputs") SendOutput(3, direction > 0 ? bareForward : bareBackward, false, false);
+                else Step(3, direction, false);
+            }
+            return;
+        }
         if (m.Msg == HoldStateMessage)
         {
             int encoded = m.WParam.ToInt32(), profile = encoded / 2;
@@ -361,14 +387,15 @@ internal sealed class MainForm : Form
     }
     private void Step(int profile, int direction, bool doubleHold = true)
     {
-        if (!ValidTarget(activeWindow) || profile < 0 || profile >= cycles.Length || !config.Modifiers[profile].Enabled) return;
-        string mode = doubleHold ? config.Modifiers[profile].DoubleHoldMode : config.Modifiers[profile].HoldMode;
+        if (!ValidTarget(activeWindow) || profile < 0 || profile >= cycles.Length || !BindingAt(profile).Enabled) return;
+        ModifierBinding binding = BindingAt(profile);
+        string mode = doubleHold ? binding.DoubleHoldMode : binding.HoldMode;
         if (mode == "Hold a key") return;
         int otherModifiers = keys.ModifierFlags;
-        otherModifiers &= ~KeyChord.FamilyFlag(gestures.Profiles[profile].State.Family);
+        if (profile < gestures.Profiles.Length) otherModifiers &= ~KeyChord.FamilyFlag(gestures.Profiles[profile].State.Family);
         if (otherModifiers != 0) return;
         if (mode == "Dial scrolling")
-        { SendOutput(profile, new KeyChord { Key = direction > 0 ? KeyChord.WheelUp : KeyChord.WheelDown }, false, false); return; }
+        { SendOutput(profile, InputBuilder.ScrollOutput(binding, direction), false, false); return; }
         ToolCycle cycle = cycles[profile];
         int next = cycle.Next(direction);
         if (Send(cycle.Inputs[next])) { cycle.Position = next; uiDirty = true; }
@@ -429,7 +456,7 @@ internal sealed class MainForm : Form
     }
     internal static void SelfTest()
     {
-        AppSettings.SelfTest(); ModifierGestures.SelfTest(); KeySnapshot.SelfTest(); GestureBank.SelfTest(); InputBuilder.SelfTest(); ToolCycle.SelfTest();
+        AppSettings.SelfTest(); ModifierGestures.SelfTest(); KeySnapshot.SelfTest(); GestureBank.SelfTest(); InputBuilder.SelfTest(); ToolCycle.SelfTest(); BareDial.SelfTest();
         foreach (int count in new int[] { 1, 2, 20, 64 })
         {
             if (NextIndex(-1, 1, count) != 0 || NextIndex(-1, -1, count) != count - 1) throw new Exception("Cycle anchors.");
