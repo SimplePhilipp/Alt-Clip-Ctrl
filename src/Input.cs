@@ -316,6 +316,7 @@ internal sealed class ModifierGestures
 
 internal static class Native
 {
+    internal static readonly int InputSize = Marshal.SizeOf(typeof(INPUT));
     internal delegate void WinEventProc(IntPtr hook, uint ev, IntPtr hwnd, int obj, int child, uint thread, uint time);
     internal delegate IntPtr InputHookProc(int code, IntPtr message, IntPtr data);
     [DllImport("kernel32.dll", CharSet = CharSet.Auto)] internal static extern IntPtr GetModuleHandle(string name);

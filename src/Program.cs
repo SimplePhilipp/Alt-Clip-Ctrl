@@ -21,7 +21,7 @@ internal static class Program
             if (test)
             {
                 MainForm.SelfTest();
-                File.WriteAllText(args[1], "PASS: identical hold modes, idle timer demand, 3000 wrapped ordinary turns, modifier-free cached wheel output, migration and gesture regressions.\r\n");
+                File.WriteAllText(args[1], "PASS: 60000 scroll-session turns, exact direction/order, one steady wheel event per turn, session reset, cached output and gesture regressions.\r\n");
                 return 0;
             }
             bool first;
@@ -39,7 +39,7 @@ internal static class Program
                         var timer = new System.Windows.Forms.Timer { Interval = 350 };
                         timer.Tick += delegate {
                             timer.Stop(); form.VerifyConfigUi(args[1]);
-                            File.WriteAllText(args[1], "PASS: plain-language UI, no tap scrolling, identical hold choices including Dial modifier, idle fast timer stopped, held-output cleanup and shutdown.\r\n");
+                            File.WriteAllText(args[1], "PASS: 12000 immediate-dispatch/overlapping-notch checks without UI pumping, plain-language UI, idle timer, held-output cleanup and shutdown.\r\n");
                             timer.Dispose(); form.Close();
                             if (!form.IsDisposed) throw new Exception("Closing the main window did not exit.");
                             form.VerifyReleasedOutputs();
@@ -68,6 +68,7 @@ internal sealed class MainForm : Form
     private AppSettings config;
     private GestureBank gestures;
     private ToolCycle[] cycles;
+    private readonly ScrollSession scrollSession = new ScrollSession();
     private readonly KeySnapshot keys = new KeySnapshot();
     private readonly Label summary = new Label(), status = new Label(), tracked = new Label();
     private readonly NotifyIcon tray = new NotifyIcon();
@@ -128,7 +129,7 @@ internal sealed class MainForm : Form
         scopeClock.Interval = 1000; scopeClock.Tick += delegate { RefreshScope(); };
         gestureClock.Interval = 15;
         gestureClock.Tick += delegate {
-            if (activeWindow == IntPtr.Zero || paused || testMode || Native.GetForegroundWindow() != activeWindow) { EndCustomHold(); gestures.Reset(); gestureClock.Stop(); return; }
+            if (activeWindow == IntPtr.Zero || paused || testMode || Native.GetForegroundWindow() != activeWindow) { EndCustomHold(); scrollSession.Reset(); gestures.Reset(); gestureClock.Stop(); return; }
             uint now = Native.GetTickCount();
             for (int i = 0; i < gestures.Profiles.Length; i++)
             {
@@ -145,7 +146,7 @@ internal sealed class MainForm : Form
 
     private void ApplyConfig(AppSettings value)
     {
-        EndCustomHold(); value.Validate(); config = value; gestures = new GestureBank(config);
+        EndCustomHold(); scrollSession.Reset(); value.Validate(); config = value; gestures = new GestureBank(config);
         cycles = new ToolCycle[config.Modifiers.Count];
         for (int i = 0; i < cycles.Length; i++) cycles[i] = new ToolCycle(config.Modifiers[i].Tools);
         string enabled = "";
@@ -203,7 +204,7 @@ internal sealed class MainForm : Form
         if (paused || testMode || !config.Enabled || !TargetAllowed()) { activeWindow = IntPtr.Zero; DisableHooks(); UpdateUi(); return; }
         IntPtr current = Native.GetForegroundWindow();
         if (activeWindow == current && keyboardHook != IntPtr.Zero && mouseHook != IntPtr.Zero) return;
-        if (activeWindow != current) { EndCustomHold(); gestures.Reset(); if (keyboardHook != IntPtr.Zero) SeedKeys(); }
+        if (activeWindow != current) { EndCustomHold(); scrollSession.Reset(); gestures.Reset(); if (keyboardHook != IntPtr.Zero) SeedKeys(); }
         activeWindow = current;
         if (!EnableHooks()) status.Text = "Input listeners unavailable. Restart the app."; else UpdateUi();
         UpdateGestureTimer();
@@ -226,6 +227,7 @@ internal sealed class MainForm : Form
     private void DisableHooks()
     {
         gestureClock.Stop();
+        scrollSession.Reset();
         EndCustomHold();
         if (keyboardHook != IntPtr.Zero) Native.UnhookWindowsHookEx(keyboardHook);
         if (mouseHook != IntPtr.Zero) Native.UnhookWindowsHookEx(mouseHook);
@@ -241,7 +243,7 @@ internal sealed class MainForm : Form
         if (code < 0) return Native.CallNextHookEx(keyboardHook, code, message, data);
         Native.KBDLLHOOKSTRUCT key = (Native.KBDLLHOOKSTRUCT)Marshal.PtrToStructure(data, typeof(Native.KBDLLHOOKSTRUCT));
         if (key.dwExtraInfo.ToUInt64() == ModifierGestures.OwnInputMarker) return Native.CallNextHookEx(keyboardHook, code, message, data);
-        if (activeWindow == IntPtr.Zero || Native.GetForegroundWindow() != activeWindow || paused) { EndCustomHold(); gestures.Reset(); return Native.CallNextHookEx(keyboardHook, code, message, data); }
+        if (activeWindow == IntPtr.Zero || Native.GetForegroundWindow() != activeWindow || paused) { EndCustomHold(); scrollSession.Reset(); gestures.Reset(); return Native.CallNextHookEx(keyboardHook, code, message, data); }
         key.vkCode = (uint)KeySnapshot.Normalize((int)key.vkCode, key.flags, key.scanCode);
         int msg = message.ToInt32(); bool down = msg == 0x100 || msg == 0x104, up = msg == 0x101 || msg == 0x105;
         if (!down && !up) return Native.CallNextHookEx(keyboardHook, code, message, data);
@@ -254,6 +256,7 @@ internal sealed class MainForm : Form
                 modifiers &= ~KeyChord.FamilyFlag(p.State.Family);
         if (heldOutput != null) modifiers |= InputBuilder.OutputModifiers(heldOutput);
         GestureResult result = gestures.Handle(key, down, keys);
+        scrollSession.Sync(gestures.Profiles);
         if (down && (result.Action & GestureAction.Consume) == 0)
         {
             for (int p = 0; p < cycles.Length; p++)
@@ -264,11 +267,14 @@ internal sealed class MainForm : Form
         }
         if (!(capturedBefore && gestures.Captured((int)key.vkCode))) keys.Set((int)key.vkCode, down);
         if ((result.Action & GestureAction.ReleaseModifier) != 0)
-            if (!Native.PostMessage(Handle, ReleaseMessage, new IntPtr(key.vkCode), activeWindow)) { gestures.Reset(); return Native.CallNextHookEx(keyboardHook, code, message, data); }
-        if ((result.Action & GestureAction.Next) != 0) Native.PostMessage(Handle, CycleMessage, new IntPtr(result.Profile * 2), activeWindow);
-        if ((result.Action & GestureAction.Previous) != 0) Native.PostMessage(Handle, CycleMessage, new IntPtr(result.Profile * 2 + 1), activeWindow);
-        if ((result.Action & GestureAction.HoldForward) != 0) Native.PostMessage(Handle, OutputMessage, new IntPtr(result.Profile * 2), activeWindow);
-        if ((result.Action & GestureAction.HoldBackward) != 0) Native.PostMessage(Handle, OutputMessage, new IntPtr(result.Profile * 2 + 1), activeWindow);
+            if (!Native.PostMessage(Handle, ReleaseMessage, new IntPtr(key.vkCode), activeWindow)) { scrollSession.Reset(); gestures.Reset(); return Native.CallNextHookEx(keyboardHook, code, message, data); }
+        if (!DispatchScroll(result))
+        {
+            if ((result.Action & GestureAction.Next) != 0) Native.PostMessage(Handle, CycleMessage, new IntPtr(result.Profile * 2), activeWindow);
+            if ((result.Action & GestureAction.Previous) != 0) Native.PostMessage(Handle, CycleMessage, new IntPtr(result.Profile * 2 + 1), activeWindow);
+            if ((result.Action & GestureAction.HoldForward) != 0) Native.PostMessage(Handle, OutputMessage, new IntPtr(result.Profile * 2), activeWindow);
+            if ((result.Action & GestureAction.HoldBackward) != 0) Native.PostMessage(Handle, OutputMessage, new IntPtr(result.Profile * 2 + 1), activeWindow);
+        }
         int ownerAfter = gestures.DialOwner;
         if (ownerBefore != ownerAfter)
         {
@@ -302,6 +308,19 @@ internal sealed class MainForm : Form
         return Native.CallNextHookEx(mouseHook, code, message, data);
     }
     private void ResetPositions() { if (cycles != null) foreach (ToolCycle c in cycles) c.Position = -1; }
+    // Only reached from an input callback whose foreground/scope was checked,
+    // or the isolated diagnostic fixture. Never waits for the UI message queue.
+    private bool DispatchScroll(GestureResult result)
+    {
+        if (result.Profile < 0) return false;
+        bool second = (result.Action & (GestureAction.Next | GestureAction.Previous)) != 0;
+        if (!second && (result.Action & (GestureAction.HoldForward | GestureAction.HoldBackward)) == 0) return false;
+        RuntimeProfile p = gestures.Profiles[result.Profile];
+        if ((second ? p.Binding.DoubleHoldMode : p.Binding.HoldMode) != "Dial scrolling") return false;
+        int direction = (result.Action & (GestureAction.Next | GestureAction.HoldForward)) != 0 ? 1 : -1;
+        Send(scrollSession.Packet(gestures.Profiles, result.Profile, second, activeWindow, direction));
+        return true;
+    }
     private void UpdateGestureTimer()
     {
         bool needed = !testMode && activeWindow != IntPtr.Zero && !paused && (uiDirty || gestures.NeedsTimer(heldProfile));
@@ -387,7 +406,7 @@ internal sealed class MainForm : Form
         if (profile < gestures.Profiles.Length) otherModifiers &= ~KeyChord.FamilyFlag(gestures.Profiles[profile].State.Family);
         if (otherModifiers != 0) return;
         if (mode == "Dial scrolling")
-        { RuntimeProfile p = gestures.Profiles[profile]; Send(direction > 0 ? p.ScrollForward : p.ScrollBackward); return; }
+        { scrollSession.Sync(gestures.Profiles); Send(scrollSession.Packet(gestures.Profiles, profile, doubleHold, activeWindow, direction)); return; }
         if (mode == "Dial modifier")
         { RuntimeProfile p = gestures.Profiles[profile]; SendOutput(profile, direction > 0 ? p.Forward : p.Backward, true, false, direction > 0 ? p.ForwardInputs : p.BackwardInputs); return; }
         ToolCycle cycle = cycles[profile];
@@ -402,14 +421,14 @@ internal sealed class MainForm : Form
         var release = new List<Native.INPUT>();
         foreach (Native.INPUT item in input) if (item.type == 1 && (item.data.ki.dwFlags & 2) == 0) release.Add(InputBuilder.Key(item.data.ki.wVk, true));
         if (release.Count > 0) Emit(release.ToArray());
-        ResetPositions(); uiDirty = true; status.Text = "Windows blocked input. Keep both apps at normal privileges."; return false;
+        scrollSession.Reset(); ResetPositions(); uiDirty = true; status.Text = "Windows blocked input. Keep both apps at normal privileges."; return false;
     }
     internal static int NextIndex(int current, int direction, int count)
     { return current < 0 ? (direction > 0 ? 0 : count - 1) : (current + direction + count) % count; }
     private uint Emit(Native.INPUT[] input)
     {
         if (testMode) { diagnosticInputs.AddRange(input); return (uint)input.Length; }
-        return Native.SendInput((uint)input.Length, input, Marshal.SizeOf(typeof(Native.INPUT)));
+        return Native.SendInput((uint)input.Length, input, Native.InputSize);
     }
     internal void VerifyReleasedOutputs()
     {
@@ -425,6 +444,7 @@ internal sealed class MainForm : Form
                 throw new Exception("Removed button still present: " + c.Text);
         using (var bitmap = new Bitmap(Width, Height)) { DrawToBitmap(bitmap, new Rectangle(Point.Empty, bitmap.Size)); bitmap.Save(report + ".main.png"); }
         using (var dialog = new ConfigForm(config)) { dialog.VerifyAndRender(report); }
+        VerifyDirectScroll();
         VerifyPlainLanguage(this);
         foreach (bool second in new bool[] { false, true })
         foreach (string output in new string[] { "Space", "Ctrl", "Alt", "Shift", "Ctrl+Shift+F12" })
@@ -447,6 +467,39 @@ internal sealed class MainForm : Form
         foreach (Control c in parent.Controls)
         { if (c.Text.Contains("-_") || c.Text.Contains("Original modifier")) throw new Exception("Obsolete interface notation/name."); VerifyPlainLanguage(c); }
     }
+    private void VerifyDirectScroll()
+    {
+        AppSettings saved = config.Clone();
+        foreach (bool second in new bool[] { false, true })
+        for (int owner = 0; owner < 3; owner++)
+        {
+            AppSettings settings = saved.Clone(); settings.Modifiers[owner].HoldMode = settings.Modifiers[owner].DoubleHoldMode = "Dial scrolling";
+            ApplyConfig(settings); keys.Clear(); diagnosticInputs.Clear();
+            int modifier = owner == 0 ? 0xA4 : owner == 1 ? 0xA2 : 0xA0; uint now = 100;
+            if (second) { ScrollSession.Event(gestures, keys, modifier, true, now++); ScrollSession.Event(gestures, keys, modifier, false, now++); }
+            ScrollSession.Event(gestures, keys, modifier, true, now++);
+            for (int i = 0; i < 1000; i++)
+            {
+                int key = i % 2 == 0 ? 0xDD : 0xDB;
+                GestureResult result = ScrollSession.Event(gestures, keys, key, true, now++); scrollSession.Sync(gestures.Profiles);
+                int before = diagnosticInputs.Count;
+                if (!DispatchScroll(result) || diagnosticInputs.Count <= before) throw new Exception("Scrolling waited for queued UI work.");
+                if (i > 0 && diagnosticInputs.Count != before + 1) throw new Exception("Steady scrolling emitted extra keyboard input.");
+                Native.INPUT last = diagnosticInputs[diagnosticInputs.Count - 1];
+                if (last.type != 0 || last.data.mi.mouseData != (i % 2 == 0 ? 120u : unchecked((uint)-120))) throw new Exception("Direct scrolling lost/reordered input.");
+                ScrollSession.Event(gestures, keys, key, false, now++);
+            }
+            for (int i = 0; i < 1000; i++)
+            {
+                GestureResult result = ScrollSession.Event(gestures, keys, 0xDD, true, now++); scrollSession.Sync(gestures.Profiles);
+                int before = diagnosticInputs.Count;
+                if (!DispatchScroll(result) || diagnosticInputs.Count != before + 1) throw new Exception("Overlapping controller notches were delayed or lost.");
+            }
+            ScrollSession.Event(gestures, keys, 0xDD, false, now++);
+            ScrollSession.Event(gestures, keys, modifier, false, now++); scrollSession.Sync(gestures.Profiles); VerifyReleasedOutputs();
+        }
+        diagnosticInputs.Clear(); keys.Clear(); ApplyConfig(saved);
+    }
     protected override void Dispose(bool disposing)
     {
         if (disposing)
@@ -459,7 +512,7 @@ internal sealed class MainForm : Form
     }
     internal static void SelfTest()
     {
-        AppSettings.SelfTest(); ModifierGestures.SelfTest(); KeySnapshot.SelfTest(); GestureBank.SelfTest(); InputBuilder.SelfTest(); ToolCycle.SelfTest();
+        AppSettings.SelfTest(); ModifierGestures.SelfTest(); KeySnapshot.SelfTest(); GestureBank.SelfTest(); InputBuilder.SelfTest(); ToolCycle.SelfTest(); ScrollSession.SelfTest();
         foreach (int count in new int[] { 1, 2, 20, 64 })
         {
             if (NextIndex(-1, 1, count) != 0 || NextIndex(-1, -1, count) != count - 1) throw new Exception("Cycle anchors.");

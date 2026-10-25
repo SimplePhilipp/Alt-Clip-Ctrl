@@ -8,13 +8,81 @@ internal sealed class RuntimeProfile
     internal ModifierGestures State;
     internal KeyChord Tap, Forward, Backward, HoldOutput, OrdinaryOutput;
     internal KeyChord NativeModifier;
-    internal Native.INPUT[] TapInputs, ForwardInputs, BackwardInputs, ScrollForward, ScrollBackward;
+    internal Native.INPUT[] TapInputs, ForwardInputs, BackwardInputs, ScrollForward, ScrollBackward, ScrollStartForward, ScrollStartBackward;
 }
 
 internal struct GestureResult
 {
     internal GestureAction Action;
     internal int Profile;
+}
+
+internal sealed class ScrollSession
+{
+    private int profile = -1;
+    private bool secondPress;
+    private IntPtr window;
+    internal void Reset() { profile = -1; window = IntPtr.Zero; }
+    internal void Sync(RuntimeProfile[] profiles)
+    {
+        if (profile < 0) return;
+        RuntimeProfile p = profiles[profile];
+        if (!p.Binding.Enabled || (secondPress ? !p.State.DialActive || p.Binding.DoubleHoldMode != "Dial scrolling"
+            : !p.State.OrdinaryHeld || p.Binding.HoldMode != "Dial scrolling")) Reset();
+    }
+    internal Native.INPUT[] Packet(RuntimeProfile[] profiles, int owner, bool second, IntPtr target, int direction)
+    {
+        bool first = profile != owner || secondPress != second || window != target;
+        profile = owner; secondPress = second; window = target;
+        RuntimeProfile p = profiles[owner];
+        return first ? (direction > 0 ? p.ScrollStartForward : p.ScrollStartBackward)
+            : (direction > 0 ? p.ScrollForward : p.ScrollBackward);
+    }
+    internal static void SelfTest()
+    {
+        foreach (bool second in new bool[] { false, true })
+        for (int owner = 0; owner < 3; owner++)
+        {
+            var settings = AppSettings.Defaults(); settings.Modifiers[owner].HoldMode = settings.Modifiers[owner].DoubleHoldMode = "Dial scrolling";
+            var bank = new GestureBank(settings); var keys = new KeySnapshot(); var session = new ScrollSession();
+            int modifier = owner == 0 ? 0xA4 : owner == 1 ? 0xA2 : 0xA0;
+            uint now = 100;
+            if (second) { Event(bank, keys, modifier, true, now++); Event(bank, keys, modifier, false, now++); }
+            Event(bank, keys, modifier, true, now++);
+            int wheels = 0, keyboardEvents = 0;
+            for (int i = 0; i < 10000; i++)
+            {
+                int direction = i % 3 == 0 ? -1 : 1, key = direction > 0 ? 0xDD : 0xDB;
+                session.Sync(bank.Profiles);
+                GestureResult result = Event(bank, keys, key, true, now++);
+                GestureAction expected = second ? (direction > 0 ? GestureAction.Next : GestureAction.Previous)
+                    : (direction > 0 ? GestureAction.HoldForward : GestureAction.HoldBackward);
+                if ((result.Action & expected) == 0) throw new Exception("Fast scrolling lost a notch.");
+                Native.INPUT[] packet = session.Packet(bank.Profiles, owner, second, new IntPtr(1), direction);
+                foreach (Native.INPUT input in packet)
+                {
+                    if (input.type == 0) { wheels++; if (input.data.mi.mouseData != (direction > 0 ? 120u : unchecked((uint)-120))) throw new Exception("Fast scroll reordered direction."); }
+                    else keyboardEvents++;
+                }
+                if (i > 0 && packet.Length != 1) throw new Exception("Steady scrolling injected extra keys.");
+                Event(bank, keys, key, false, now++);
+            }
+            if (wheels != 10000 || keyboardEvents != (owner == 0 ? 4 : 2)) throw new Exception("Fast scroll event totals.");
+            Event(bank, keys, modifier, false, now++); session.Sync(bank.Profiles);
+            Event(bank, keys, modifier, true, now++);
+            Native.INPUT[] fresh = session.Packet(bank.Profiles, owner, false, new IntPtr(1), 1);
+            if (fresh.Length <= 1) throw new Exception("A new scroll gesture omitted modifier cleanup.");
+            session.Reset();
+            if (session.Packet(bank.Profiles, owner, false, new IntPtr(2), 1).Length <= 1) throw new Exception("Focus reset omitted modifier cleanup.");
+        }
+    }
+    internal static GestureResult Event(GestureBank bank, KeySnapshot keys, int key, bool down, uint time)
+    {
+        bool captured = bank.Captured(key);
+        GestureResult result = bank.Handle(new Native.KBDLLHOOKSTRUCT { vkCode = (uint)key, flags = 0x10, time = time }, down, keys);
+        if (!(captured && bank.Captured(key))) keys.Set(key, down);
+        return result;
+    }
 }
 
 internal sealed class ToolCycle
@@ -76,7 +144,8 @@ internal sealed class GestureBank
         {
             p.NativeModifier = KeyChord.ParseHold(p.Binding.Modifier);
             p.TapInputs = InputBuilder.Build(p.Tap); p.ForwardInputs = InputBuilder.Build(p.Forward); p.BackwardInputs = InputBuilder.Build(p.Backward);
-            p.ScrollForward = InputBuilder.DialScroll(p.Binding, 1); p.ScrollBackward = InputBuilder.DialScroll(p.Binding, -1);
+            p.ScrollStartForward = InputBuilder.DialScroll(p.Binding, 1); p.ScrollStartBackward = InputBuilder.DialScroll(p.Binding, -1);
+            p.ScrollForward = InputBuilder.Build(InputBuilder.ScrollOutput(p.Binding, 1)); p.ScrollBackward = InputBuilder.Build(InputBuilder.ScrollOutput(p.Binding, -1));
         }
     }
     internal bool NeedsTimer(int heldProfile)

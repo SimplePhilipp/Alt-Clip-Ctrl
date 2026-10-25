@@ -38,7 +38,7 @@ The controller button should send the selected modifier down when pressed and up
 
 Software-generated input is accepted. The helper ignores only its own marked output. Repeated modifier-down/bracket/modifier-up packets from controller software retain the held gesture.
 
-Scrolling acts at the mouse pointer according to the target app's normal mouse-wheel handling. Hover over a scrollable panel or slider before turning. This does not automatically locate a color wheel or make unsupported controls scrollable. Prepared scroll packets release the activation modifier before the wheel event, avoiding Ctrl+wheel zoom or Shift+wheel horizontal scrolling.
+Scrolling acts at the mouse pointer according to the target app's normal mouse-wheel handling. Hover over a scrollable panel or slider before turning. This does not automatically locate a color wheel or make unsupported controls scrollable. The first packet in a scroll gesture releases the activation modifier before the wheel event, avoiding Ctrl+wheel zoom or Shift+wheel horizontal scrolling. Subsequent turns send only wheel events, without repeated modifier keystrokes.
 
 Scroll up/down remain available as clockwise/counterclockwise outputs under Dial modifier. Direct scroll outputs send one notch; Dial scrolling uses its amount and reversal settings. Inputs remain keyboard keys. Key and shortcut text supports B, F12, Space, Ctrl+Shift+F1, Plus, Minus, and similar key names. Pure modifiers such as Ctrl or Alt can be used for Hold a key.
 
@@ -69,7 +69,7 @@ Use shortcut actions with the canvas active, outside dialogs and text editing, a
 
 ## Efficiency and privacy
 
-The fast gesture timer sleeps when no gesture deadline or queued interface refresh needs processing. Scrolling reuses prepared native input packets, and tool shortcut lookup uses cached indexes. Foreground process checks are cached; focus events handle app changes with a one-second fallback. UI refreshes are coalesced about 40 ms apart. No artificial delay is added to dial steps.
+The fast gesture timer sleeps when no gesture deadline or queued interface refresh needs processing. Scrolling reuses prepared native input packets and dispatches directly from validated dial input, without waiting for the UI message queue. It does not batch, net together opposite directions, or add a smoothing timer. Tool shortcut lookup uses cached indexes. Foreground process checks are cached; focus events handle app changes with a one-second fallback. UI refreshes are coalesced about 40 ms apart. No artificial delay is added to dial steps.
 
 No network code, clipboard access, keystroke history, startup entry, registry changes, or automatic updater is included. Only settings saved through Config are persisted. Temporary input listeners are removed outside the selected scope or when paused/disabled. Held outputs are released on gesture release, focus change, applying settings, pause, disable, or exit.
 
@@ -79,7 +79,7 @@ The executable is unsigned. Keep CSP and the helper at normal privileges; Window
 
 The public source is [SimplePhilipp/Alt-Clip-Ctrl](https://github.com/SimplePhilipp/Alt-Clip-Ctrl). Build with build.ps1 using Microsoft's existing .NET Framework compiler. The executable is written to bin/AltClipCtrl.exe.
 
-Run test.ps1 for gesture/output/config tests, or test.ps1 -Smoke for UI and cleanup checks. Diagnostic tests emit no real keyboard or scroll input. Coverage includes all gesture modes, identical hold choices, tap scrolling exclusion, idle timer demand, 3,000 wrapped ordinary dial turns across Alt/Ctrl/Shift, modifier-free wheel packets, independent cycles, migration, and held-output cleanup. UI previews were visually checked. No hardware latency or CPU percentage is claimed.
+Run test.ps1 for gesture/output/config tests, or test.ps1 -Smoke for UI and cleanup checks. Diagnostic tests emit no real keyboard or scroll input. Coverage includes all gesture modes, identical hold choices, tap scrolling exclusion, idle timer demand, 60,000 scroll-session turns with rapid reversals, 12,000 immediate-dispatch/overlapping-notch checks, 3,000 wrapped ordinary turns, modifier-free wheel packets, session release/focus reset, independent cycles, migration, and held-output cleanup. UI previews were visually checked. No hardware latency or CPU percentage is claimed.
 
 ## Config preview
 
