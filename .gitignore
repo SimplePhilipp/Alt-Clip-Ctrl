@@ -6,3 +6,4 @@ AltClipCtrl.settings.xml
 *.tmp
 *.user
 *.suo
+outputs/

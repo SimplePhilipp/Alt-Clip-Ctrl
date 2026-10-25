@@ -39,12 +39,13 @@ The default tap wait is **100 ms**: start the second press within that window af
 
 ## Config
 
-Config has four tabs: **Alt**, **Ctrl**, **Shift**, and **No modifier**. The global enable switch and **Only in Clip Studio Paint** detection switch stay at the top. Turning detection off permits bindings in other foreground apps; the helper's own windows are always excluded.
+Config has three tabs: **Alt**, **Ctrl**, and **Shift**. The global enable switch and **Only in Clip Studio Paint** detection switch stay at the top. Turning detection off permits bindings in other foreground apps; the helper's own windows are always excluded.
 
 Choose a gesture on the left: **Tap (-)**, **Hold (_)**, or **Tap then hold (-_)**. The right side shows only the controls for that gesture's selected action. Fixed radio-button choices replace editable action names. A sentence preview explains the result.
 
 | Action | Relevant controls |
 | --- | --- |
+| No action (any gesture) | Sends nothing for that gesture, including its dial steps. |
 | Key / shortcut (tap) | Output and Record button; Scroll up/down are also direct choices. |
 | Original modifier (ordinary hold only, default) | Clockwise and counterclockwise outputs; keeps native Alt/Ctrl/Shift between steps. |
 | Cycle list | Editable list in the same pane, with Record, Move up/down, and Remove. |
@@ -55,11 +56,7 @@ Dial input keys are configured on the left. **Advanced timing** is collapsed by 
 
 The **Notation help** button explains the symbols. Save/Cancel stay visible. **Unsaved changes** marks pending edits; switching tabs or gestures keeps them. Save applies and persists them; Cancel discards them. Restore defaults fills the dialog but does not apply anything until Save. Disabled profiles can still be configured.
 
-### No modifier
-
-No modifier handles turning the dial without Alt, Ctrl, Shift, or Win held. It is **disabled by default**, preserving existing keyboard behavior. Enable it explicitly and choose **Custom outputs**, **Cycle list**, or **Dial scrolling**. It has its own input keys, cycle list, remembered position, and scroll settings.
-
-For example, configure No modifier for scrolling, _Alt for native Alt, and -_Alt for a tool cycle. The controller must send the configured bare input keys (default ] clockwise and [ counterclockwise) for No modifier to apply. A controller that always wraps turns in Alt/Ctrl/Shift is still sending a modified gesture. Enabling No modifier replaces those bare key presses within the helper's active scope; modifier shortcuts remain available.
+Choose **No action** independently for Tap (-), Hold (_), or Tap then hold (-_). Other gestures keep their own settings. A No action hold suppresses the modifier action; choose **Original modifier** to keep a native Alt/Ctrl/Shift hold. Turning off the profile enable switch instead bypasses all mappings for that modifier.
 
 ### Scrolling, outputs, and held keys
 
@@ -69,7 +66,7 @@ Scrolling acts at the mouse pointer according to the target application's wheel 
 
 Held key outputs are released on gesture release, focus change, pause, disabling, applying settings, or exiting. The ordinary hold defaults to Original modifier, and tap-then-hold defaults to Cycle list, preserving earlier settings.
 
-Save writes AltClipCtrl.settings.xml beside the executable. Keep that file when upgrading; old settings automatically receive a disabled No modifier profile and default scroll controls. Keep a backup before downgrading. The example XML is not loaded automatically. No keystroke history is written.
+Save writes AltClipCtrl.settings.xml beside the executable. Keep that file when upgrading; older settings retain their Alt/Ctrl/Shift bindings; the removed No modifier profile from v1.3.0 is ignored and omitted when saved. Keep a backup before downgrading. The example XML is not loaded automatically. No keystroke history is written.
 
 ## Tools and tracking
 
@@ -92,7 +89,7 @@ Default order:
 
 The app observes configured tool shortcuts used directly on your keyboard or controller, including modifier combinations. A direct shortcut updates each cycle containing that shortcut, at its own matching row. Cycling and mapped gesture outputs update only the modifier that issued them, even when another cycle contains the same shortcut. Mouse selections and unknown shortcuts cannot be identified directly: CSP does not expose its current tool through a supported simple query. After a mouse selection, press that tool's configured shortcut to resync. The old Match tracker button and menu are removed.
 
-The app remembers requested selections; it cannot confirm CSP accepted them. Each cycle wraps independently. When its position is unknown, first next selects its first listed tool and first previous selects its last. An unknown tap output such as default B resets only that modifier's position; other unmapped held outputs retain its latest position. The main window shows all four positions, including No modifier. The tray command **Forget all cycle positions** resets all four.
+The app remembers requested selections; it cannot confirm CSP accepted them. Each cycle wraps independently. When its position is unknown, first next selects its first listed tool and first previous selects its last. An unknown tap output such as default B resets only that modifier's position; other unmapped held outputs retain its latest position. The main window shows all three cycle positions. The tray command **Forget all cycle positions** resets all three.
 
 Set corresponding shortcuts in CSP yourself. Remove collisions with menu, palette, group, or individual-tool shortcuts. This helper does not change CSP settings. Use with the canvas active, outside dialogs/text editing and between brush strokes. Pause while changing CSP shortcuts. When auto-detection is off, tool tracking observes the same keys in other apps too and cannot imply CSP's active tool.
 
@@ -104,7 +101,7 @@ The optimized event path retains rapid injected notches and balanced nested modi
 
 ## Privacy and limitations
 
-No network code, clipboard access, keystroke log, startup entry, registry changes, or automatic updater. Current held-key state, gestures, and the four cycle positions stay in memory. Only settings explicitly saved through Config are persisted. Temporary keyboard/mouse listeners are installed in the selected scope and removed when disabled, paused, or outside that scope.
+No network code, clipboard access, keystroke log, startup entry, registry changes, or automatic updater. Current held-key state, gestures, and the three cycle positions stay in memory. Only settings explicitly saved through Config are persisted. Temporary keyboard/mouse listeners are installed in the selected scope and removed when disabled, paused, or outside that scope.
 
 Keep CSP and the helper at normal privileges; Windows may block input sent to a more privileged app. The executable is unsigned. The icon and source are included. Exit the app and delete its files to remove it.
 

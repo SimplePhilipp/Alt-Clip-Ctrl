@@ -15,41 +15,6 @@ internal struct GestureResult
     internal int Profile;
 }
 
-internal sealed class BareDial
-{
-    private bool nextDown, previousDown;
-    private ModifierBinding configured;
-    private int next, previous;
-    internal void Reset() { nextDown = previousDown = false; }
-    internal GestureAction Handle(ModifierBinding binding, int key, bool down, bool eligible, bool injected)
-    {
-        if (!object.ReferenceEquals(configured, binding))
-        { configured = binding; next = KeyChord.Parse(binding.NextInput).Key; previous = KeyChord.Parse(binding.PreviousInput).Key; Reset(); }
-        if (key != next && key != previous) return GestureAction.None;
-        bool captured = key == next ? nextDown : previousDown;
-        if (!down && captured)
-        { if (key == next) nextDown = false; else previousDown = false; return GestureAction.Consume; }
-        if (!binding.Enabled || !eligible) return captured ? GestureAction.Consume : GestureAction.None;
-        if (!down) return GestureAction.None;
-        if (captured && !injected) return GestureAction.Consume;
-        if (key == next) nextDown = true; else previousDown = true;
-        return GestureAction.Consume | (key == next ? GestureAction.Next : GestureAction.Previous);
-    }
-    internal static void SelfTest()
-    {
-        ModifierBinding b = AppSettings.Defaults().NoModifier; var dial = new BareDial();
-        if (dial.Handle(b, 0xDD, true, true, true) != GestureAction.None) throw new Exception("Bare dial should default to disabled.");
-        b.Enabled = true;
-        if ((dial.Handle(b, 0xDD, true, false, true) & GestureAction.Consume) != 0) throw new Exception("Bare dial captured a modifier shortcut.");
-        for (int i = 0; i < 1000; i++) if ((dial.Handle(b, 0xDD, true, true, true) & GestureAction.Next) == 0) throw new Exception("Lost injected bare dial notch.");
-        if (dial.Handle(b, 0xDD, true, true, false) != GestureAction.Consume || dial.Handle(b, 0xDD, false, false, false) != GestureAction.Consume)
-            throw new Exception("Bare dial repeat/release handling.");
-        if ((dial.Handle(b, 0xDB, true, true, false) & GestureAction.Previous) == 0) throw new Exception("Bare dial reverse.");
-        dial.Reset();
-        if (dial.Handle(b, 0xDB, false, true, false) != GestureAction.None) throw new Exception("Bare dial reset.");
-    }
-}
-
 internal sealed class ToolCycle
 {
     internal readonly List<ToolBinding> Tools;
@@ -83,9 +48,6 @@ internal sealed class ToolCycle
         cycles[0].Position = cycles[0].Next(1);
         if (cycles[0].Position != 2) throw new Exception("Switching cycles lost the previous position.");
         if (cycles[0].Index(0x70, 0) != 9 || cycles[1].Index(0x70, 0) != 0 || cycles[2].Index(0x70, 0) != -1) throw new Exception("Per-cycle shortcut matching.");
-        var bareCycle = new ToolCycle(s.NoModifier.Tools); bareCycle.Position = bareCycle.Next(-1);
-        if (bareCycle.Position != 19 || cycles[0].Position != 2 || cycles[1].Position != 0 || cycles[2].Position != 0)
-            throw new Exception("No modifier cycle independence.");
         var copy = s.Clone(); copy.Validate();
         if (copy.Modifiers[1].Tools.Count != 2 || copy.Modifiers[2].Tools.Count != 1) throw new Exception("Separate cycles were not saved.");
         // Migration preserves order/shortcuts but creates independent objects.
@@ -192,7 +154,7 @@ internal sealed class GestureBank
             g.Reset(); g.KeyEvent(vk, true, 100, true); g.KeyEvent(0x43, true, 130, true); g.KeyEvent(vk, false, 180, true);
             if (g.Poll(400)) throw new Exception("Native shortcut generated stray tap.");
         }
-        foreach (string mode in new string[] { "Cycle list", "Dial scrolling", "Hold a key" })
+        foreach (string mode in new string[] { "No action", "Cycle list", "Dial scrolling", "Hold a key" })
         {
             var settings = AppSettings.Defaults(); settings.Modifiers[1].DoubleHoldMode = mode;
             var router = new GestureBank(settings); var snapshot = new KeySnapshot();
@@ -203,7 +165,7 @@ internal sealed class GestureBank
             Route(router, snapshot, 0xDD, false, 250); Route(router, snapshot, 0xA2, false, 900);
             if (router.DialOwner != -1) throw new Exception("Tap-hold action release.");
         }
-        foreach (string mode in new string[] { "Original modifier", "Cycle list", "Dial scrolling", "Hold a key" })
+        foreach (string mode in new string[] { "No action", "Original modifier", "Cycle list", "Dial scrolling", "Hold a key" })
         {
             var settings = AppSettings.Defaults(); settings.Modifiers[2].HoldMode = mode;
             var router = new GestureBank(settings); var snapshot = new KeySnapshot();
@@ -271,6 +233,7 @@ internal static class InputBuilder
     }
     private static void AppendChord(List<Native.INPUT> input, KeyChord chord)
     {
+        if (chord.IsNone) return;
         ushort[] modifiers = { 0xA2, 0xA4, 0xA0, 0x5B };
         int[] flags = { KeyChord.Control, KeyChord.Alt, KeyChord.Shift, KeyChord.Win };
         for (int i = 0; i < 4; i++) if ((chord.Modifiers & flags[i]) != 0) input.Add(Key(modifiers[i], false));
@@ -289,6 +252,7 @@ internal static class InputBuilder
     { var input = new List<Native.INPUT>(); AppendChord(input, chord); return input.ToArray(); }
     internal static Native.INPUT[] WithHeld(KeyChord chord, ushort[] held, bool restore)
     {
+        if (chord.IsNone) return new Native.INPUT[0];
         var input = new List<Native.INPUT>();
         bool mask = false, ctrl = false;
         foreach (ushort key in held)
@@ -314,7 +278,10 @@ internal static class InputBuilder
     }
     internal static void SelfTest()
     {
-        var scroll = AppSettings.Defaults().NoModifier; scroll.ReverseScroll = true; scroll.ScrollAmount = 3;
+        KeyChord none = KeyChord.Parse("No action");
+        if (!none.IsNone || Build(none).Length != 0 || WithHeld(none, new ushort[] { 0xA4, 0xA2 }, true).Length != 0)
+            throw new Exception("No action emitted input.");
+        var scroll = AppSettings.Defaults().Modifiers[0]; scroll.ReverseScroll = true; scroll.ScrollAmount = 3;
         Native.INPUT[] scrollInputs = Build(ScrollOutput(scroll, 1));
         if (scrollInputs.Length != 1 || scrollInputs[0].data.mi.mouseData != unchecked((uint)-360)) throw new Exception("Scroll reversal/amount.");
         foreach (string text in new string[] { "Space", "Ctrl", "Alt", "Shift", "Win", "Ctrl+Shift+F1" })

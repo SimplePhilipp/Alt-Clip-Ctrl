@@ -26,8 +26,6 @@ internal sealed class KeySnapshot
     internal bool OtherKeysHeld { get { return otherCount != 0; } }
     internal void Clear() { Array.Clear(held, 0, held.Length); otherCount = 0; }
     internal bool IsDown(int key) { return key >= 0 && key < held.Length && held[key]; }
-    internal bool OtherKeysExceptDial(int next, int previous)
-    { return otherCount - (IsDown(next) ? 1 : 0) - (IsDown(previous) ? 1 : 0) != 0; }
     internal void Set(int key, bool down)
     {
         if (key < 0 || key >= held.Length || held[key] == down) return;

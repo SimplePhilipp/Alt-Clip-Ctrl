@@ -37,7 +37,7 @@ public sealed class AppSettings
     public bool Enabled { get; set; }
     public bool DetectClipStudio { get; set; }
     public List<ModifierBinding> Modifiers { get; set; }
-    public ModifierBinding NoModifier { get; set; }
+
     public List<ToolBinding> Tools { get; set; }
     public static AppSettings Defaults()
     {
@@ -70,17 +70,6 @@ public sealed class AppSettings
                     m.Tools.Add(new ToolBinding { Name = t.Name, Shortcut = t.Shortcut });
             }
         }
-        if (NoModifier == null)
-        {
-            NoModifier = new ModifierBinding { Modifier = "No modifier", Enabled = false, HoldMode = "Custom outputs", HoldOutput = "Space",
-                DoubleHoldMode = "Cycle list", DoubleHoldOutput = "Space", NextInput = "]", PreviousInput = "[", TapOutput = "B",
-                HoldNextOutput = "Scroll up", HoldPreviousOutput = "Scroll down", TapWaitMs = 100, ShortPressMs = 300, ScrollAmount = 1,
-                Tools = new List<ToolBinding>() };
-            if (Modifiers.Count > 0 && Modifiers[0].Tools != null) foreach (ToolBinding t in Modifiers[0].Tools)
-                NoModifier.Tools.Add(new ToolBinding { Name = t.Name, Shortcut = t.Shortcut });
-        }
-        if (NoModifier.ScrollAmount == 0) NoModifier.ScrollAmount = 1;
-        NoModifier.Modifier = "No modifier";
         Tools = null;
     }
     public bool ShouldSerializeTools() { return Tools != null; }
@@ -92,16 +81,16 @@ public sealed class AppSettings
         foreach (ModifierBinding m in Modifiers)
         {
             int family = KeyChord.ModifierKey(m.Modifier);
-            if (m.DoubleHoldMode != "Cycle list" && m.DoubleHoldMode != "Dial scrolling" && m.DoubleHoldMode != "Hold a key")
+            if (m.DoubleHoldMode != "No action" && m.DoubleHoldMode != "Cycle list" && m.DoubleHoldMode != "Dial scrolling" && m.DoubleHoldMode != "Hold a key")
                 throw new ArgumentException(m.Modifier + ": choose a valid tap-hold action.");
             KeyChord.ParseHold(m.DoubleHoldOutput);
-            if (m.HoldMode != "Original modifier" && m.HoldMode != "Cycle list" && m.HoldMode != "Dial scrolling" && m.HoldMode != "Hold a key")
+            if (m.HoldMode != "No action" && m.HoldMode != "Original modifier" && m.HoldMode != "Cycle list" && m.HoldMode != "Dial scrolling" && m.HoldMode != "Hold a key")
                 throw new ArgumentException(m.Modifier + ": choose a valid hold action.");
             KeyChord.ParseHold(m.HoldOutput);
             if (m.ScrollAmount < 1 || m.ScrollAmount > 20) throw new ArgumentException("Scroll amount must be between 1 and 20 notches.");
             if (!families.Add(m.Modifier)) throw new ArgumentException("Duplicate modifier profile: " + m.Modifier);
             KeyChord next = KeyChord.Parse(m.NextInput), previous = KeyChord.Parse(m.PreviousInput);
-            if (next.IsWheel || previous.IsWheel || next.Modifiers != 0 || previous.Modifiers != 0 || next.Key == previous.Key)
+            if (next.IsNone || previous.IsNone || next.IsWheel || previous.IsWheel || next.Modifiers != 0 || previous.Modifiers != 0 || next.Key == previous.Key)
                 throw new ArgumentException(m.Modifier + ": rotation inputs must be two different single keys.");
             if (KeyChord.InFamily(next.Key, family) || KeyChord.InFamily(previous.Key, family))
                 throw new ArgumentException(m.Modifier + ": a rotation input cannot be the activation modifier.");
@@ -110,14 +99,7 @@ public sealed class AppSettings
                 throw new ArgumentException("Timing must be between 20 and 2000 milliseconds.");
             ValidateTools(m.Tools, m.Modifier);
         }
-        if (NoModifier.HoldMode != "Custom outputs" && NoModifier.HoldMode != "Cycle list" && NoModifier.HoldMode != "Dial scrolling")
-            throw new ArgumentException("Choose a valid No modifier action.");
-        KeyChord bareNext = KeyChord.Parse(NoModifier.NextInput), barePrevious = KeyChord.Parse(NoModifier.PreviousInput);
-        if (bareNext.IsWheel || barePrevious.IsWheel || bareNext.Modifiers != 0 || barePrevious.Modifiers != 0 || bareNext.Key == barePrevious.Key)
-            throw new ArgumentException("No modifier needs two different single keyboard input keys.");
-        KeyChord.Parse(NoModifier.HoldNextOutput); KeyChord.Parse(NoModifier.HoldPreviousOutput);
-        if (NoModifier.ScrollAmount < 1 || NoModifier.ScrollAmount > 20) throw new ArgumentException("Scroll amount must be between 1 and 20 notches.");
-        ValidateTools(NoModifier.Tools, "No modifier");
+
     }
     private static void ValidateTools(List<ToolBinding> Tools, string modifier)
     {
@@ -164,8 +146,12 @@ public sealed class AppSettings
     internal static void SelfTest()
     {
         AppSettings s = Defaults(); s.Validate();
-        s.NoModifier.Enabled = true; s.NoModifier.HoldMode = "Cycle list"; s.NoModifier.ScrollAmount = 5; s.NoModifier.ReverseScroll = true;
-        s.NoModifier.Tools.RemoveAt(0);
+        foreach (ModifierBinding profile in s.Modifiers) { profile.TapOutput = "No action"; profile.HoldMode = "No action"; profile.DoubleHoldMode = "No action"; }
+        AppSettings disabled = s.Clone(); disabled.Validate();
+        foreach (ModifierBinding profile in disabled.Modifiers)
+            if (!KeyChord.Parse(profile.TapOutput).IsNone || profile.HoldMode != "No action" || profile.DoubleHoldMode != "No action")
+                throw new Exception("No action settings round-trip.");
+        s = Defaults();
         s.Modifiers[0].HoldMode = "Dial scrolling"; s.Modifiers[0].HoldNextOutput = "Scroll up";
         s.Modifiers[1].DoubleHoldMode = "Hold a key"; s.Modifiers[1].DoubleHoldOutput = "Ctrl";
         s.Modifiers[2].HoldMode = "Hold a key"; s.Modifiers[2].HoldOutput = "Shift+Space";
@@ -173,8 +159,6 @@ public sealed class AppSettings
         s.Modifiers[1].Enabled = false; s.Modifiers[2].TapOutput = "Ctrl+Shift+F4";
         s.Modifiers[0].Tools[0].Shortcut = "Alt+P";
         AppSettings copy = s.Clone(); copy.Validate();
-        if (!copy.NoModifier.Enabled || copy.NoModifier.HoldMode != "Cycle list" || copy.NoModifier.ScrollAmount != 5 || !copy.NoModifier.ReverseScroll || copy.NoModifier.Tools.Count != 19)
-            throw new Exception("No modifier settings round-trip.");
         if (copy.Modifiers[0].HoldMode != "Dial scrolling" || copy.Modifiers[0].HoldNextOutput != "Scroll up" || copy.Modifiers[1].DoubleHoldOutput != "Ctrl" || copy.Modifiers[2].HoldOutput != "Shift+Space")
             throw new Exception("Action/scroll settings round-trip.");
         if (copy.Enabled || copy.DetectClipStudio || copy.Modifiers[1].Enabled || copy.Modifiers[2].TapOutput != "Ctrl+Shift+F4" || copy.Modifiers[0].Tools[0].Shortcut != "Alt+P" || copy.Modifiers[1].Tools[0].Shortcut != "1")
@@ -200,7 +184,18 @@ public sealed class AppSettings
             migrated.Modifiers[0].Tools[0].Shortcut = "F12";
             if (migrated.Modifiers[2].Tools[0].Shortcut != "1") throw new Exception("Migrated cycles share objects.");
         }
-        foreach (string text in new string[] { "B", "Ctrl+Shift+F1", "Alt+Tab", "[", "]", "Space", "Shift+Plus", "Win+Left", "Scroll up", "WheelDown", "Ctrl+Scroll down" })
+        using (var xml = new StringWriter())
+        {
+            serializer.Serialize(xml, Defaults());
+            string old = xml.ToString().Replace("</AppSettings>", "<NoModifier><Enabled>true</Enabled><HoldMode>Dial scrolling</HoldMode></NoModifier></AppSettings>");
+            using (var reader = new StringReader(old))
+            {
+                var migrated = (AppSettings)serializer.Deserialize(reader); migrated.Validate();
+                using (var saved = new StringWriter())
+                { serializer.Serialize(saved, migrated); if (migrated.Modifiers.Count != 3 || saved.ToString().Contains("NoModifier")) throw new Exception("Removed profile migration."); }
+            }
+        }
+        foreach (string text in new string[] { "No action", "B", "Ctrl+Shift+F1", "Alt+Tab", "[", "]", "Space", "Shift+Plus", "Win+Left", "Scroll up", "WheelDown", "Ctrl+Scroll down" })
         {
             KeyChord c = KeyChord.Parse(text), roundTrip = KeyChord.Parse(KeyChord.Parse(text).ToString());
             if (c.Key != roundTrip.Key || c.Modifiers != roundTrip.Modifiers) throw new Exception("Shortcut parsing: " + text);
@@ -210,6 +205,8 @@ public sealed class AppSettings
 
 internal sealed class KeyChord
 {
+    internal const ushort NoAction = 0x102;
+    internal bool IsNone { get { return Key == NoAction; } }
     internal const ushort WheelUp = 0x100, WheelDown = 0x101;
     internal bool IsWheel { get { return Key == WheelUp || Key == WheelDown; } }
     internal const int Control = 1, Alt = 2, Shift = 4, Win = 8;
@@ -237,12 +234,14 @@ internal sealed class KeyChord
             : name == "SHIFT" ? (ushort)0xA0 : name == "WIN" || name == "WINDOWS" ? (ushort)0x5B : (ushort)0;
         if (modifier != 0) return new KeyChord { Key = modifier };
         KeyChord chord = Parse(text);
+        if (chord.IsNone) throw new ArgumentException("Choose No action in the action selector instead of the held-key field.");
         if (chord.IsWheel) throw new ArgumentException("A scroll notch cannot be held. Choose Dial scrolling instead.");
         return chord;
     }
     internal static KeyChord Parse(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) throw new ArgumentException("A shortcut cannot be empty.");
+        if (text.Trim().Equals("No action", StringComparison.OrdinalIgnoreCase)) return new KeyChord { Key = NoAction };
         string[] parts = text.Trim().Split('+');
         int modifiers = 0;
         for (int i = 0; i < parts.Length - 1; i++)
@@ -283,6 +282,7 @@ internal sealed class KeyChord
     }
     public override string ToString()
     {
+        if (IsNone) return "No action";
         string name = Key == 0xA2 ? "Ctrl" : Key == 0xA4 ? "Alt" : Key == 0xA0 ? "Shift" : Key == 0x5B ? "Win"
             : Key == WheelUp ? "Scroll up" : Key == WheelDown ? "Scroll down" : Key == 0xDB ? "[" : Key == 0xDD ? "]" : Key == 0xBB ? "Plus" : Key == 0xBD ? "Minus"
             : Key >= 0x30 && Key <= 0x39 ? ((char)Key).ToString() : ((Keys)Key).ToString();

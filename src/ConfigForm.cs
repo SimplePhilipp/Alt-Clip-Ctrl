@@ -20,7 +20,7 @@ internal sealed class ConfigForm : Form
         detection.Text = "Only in Clip Studio Paint"; detection.SetBounds(300, 14, 300, 28);
         var help = new Button { Text = "Notation help", Location = new Point(758, 12), Size = new Size(144, 30) };
         help.Click += delegate { MessageBox.Show(this,
-            "- means tap: press and release.\r\n_ means hold: keep pressed.\r\n-_ means tap, release, then hold the same key again.\r\n+ means press together.\r\n\r\nExample: -_Ctrl enables the action chosen under Tap then hold.\r\n\r\nCustom ordinary held keys start after Maximum short press.\r\nCycle and scroll dial steps act immediately.\r\nNo modifier applies only when no modifier is held.\r\n\r\nScroll acts at the mouse pointer. Cycle shortcuts must match CSP.",
+            "- means tap: press and release.\r\n_ means hold: keep pressed.\r\n-_ means tap, release, then hold the same key again.\r\n+ means press together.\r\n\r\nExample: -_Ctrl enables the action chosen under Tap then hold.\r\n\r\nCustom ordinary held keys start after Maximum short press.\r\nCycle and scroll dial steps act immediately.\r\nNo action sends nothing for the selected gesture.\r\n\r\nScroll acts at the mouse pointer. Cycle shortcuts must match CSP.",
             "Tap / hold notation", MessageBoxButtons.OK, MessageBoxIcon.Information); };
         var scope = new Label { Text = "Detection off: bindings work in other apps too. This Config window is always excluded.",
             Location = new Point(18, 48), Size = new Size(884, 26) };
@@ -44,7 +44,7 @@ internal sealed class ConfigForm : Form
         loading = true; profiles.Clear();
         while (tabs.TabPages.Count > 0) { TabPage old = tabs.TabPages[0]; tabs.TabPages.RemoveAt(0); old.Dispose(); }
         enabled.Checked = settings.Enabled; detection.Checked = settings.DetectClipStudio;
-        var bindings = new List<ModifierBinding>(settings.Modifiers); bindings.Add(settings.NoModifier);
+        var bindings = new List<ModifierBinding>(settings.Modifiers);
         foreach (ModifierBinding binding in bindings)
         {
             var editor = new ProfileEditor(binding); editor.Dock = DockStyle.Fill; editor.Changed += delegate { MarkDirty(); };
@@ -55,14 +55,14 @@ internal sealed class ConfigForm : Form
     internal AppSettings ReadSettings()
     {
         var settings = new AppSettings { Enabled = enabled.Checked, DetectClipStudio = detection.Checked, Modifiers = new List<ModifierBinding>() };
-        for (int i = 0; i < profiles.Count; i++) { ModifierBinding p = profiles[i].Read(); if (i == 3) settings.NoModifier = p; else settings.Modifiers.Add(p); }
+        for (int i = 0; i < profiles.Count; i++) { ModifierBinding p = profiles[i].Read(); settings.Modifiers.Add(p); }
         return settings;
     }
     internal void VerifyAndRender(string report)
     {
         IntPtr handle = Handle; CreateControl();
         AppSettings before = ReadSettings().Clone(); before.Validate();
-        if (tabs.TabPages.Count != 4 || before.NoModifier.Enabled) throw new Exception("Four profile tabs/default bare dial missing.");
+        if (tabs.TabPages.Count != 3) throw new Exception("Only Alt, Ctrl and Shift tabs should be shown.");
         for (int i = 0; i < profiles.Count; i++)
         {
             tabs.SelectedIndex = i; CreateHandles(this); PerformLayout();
@@ -72,12 +72,13 @@ internal sealed class ConfigForm : Form
         tabs.SelectedIndex = 0;
         profiles[0].PreviewAction(2, "Cycle list"); SavePreview(report + ".cycle.png");
         profiles[0].PreviewAction(1, "Hold a key"); SavePreview(report + ".hold.png");
-        tabs.SelectedIndex = 3;
-        profiles[3].PreviewAction(0, "Dial scrolling"); SavePreview(report + ".scroll.png");
+        tabs.SelectedIndex = 0;
+        profiles[0].PreviewAction(1, "Dial scrolling"); SavePreview(report + ".scroll.png");
+        profiles[0].PreviewAction(2, "No action"); SavePreview(report + ".none.png");
         if (dirty.Text != "Unsaved changes") throw new Exception("Unsaved indicator did not update.");
         AppSettings edited = ReadSettings(); edited.Validate();
         LoadSettings(edited); AppSettings reloaded = ReadSettings(); reloaded.Validate();
-        if (reloaded.NoModifier.HoldMode != edited.NoModifier.HoldMode || reloaded.Modifiers[1].Tools.Count != edited.Modifiers[1].Tools.Count)
+        if (reloaded.Modifiers[1].Tools.Count != edited.Modifiers[1].Tools.Count)
             throw new Exception("Redesigned config round-trip.");
         LoadSettings(before);
     }
@@ -90,7 +91,6 @@ internal sealed class ProfileEditor : UserControl
 {
     internal event EventHandler Changed;
     private readonly ModifierBinding model;
-    private readonly bool bare;
     private readonly CheckBox enabled = new CheckBox(), advanced = new CheckBox(), reverse = new CheckBox();
     private readonly TextBox next = new TextBox(), previous = new TextBox();
     private readonly ComboBox output = OutputBox(), forward = OutputBox(), backward = OutputBox();
@@ -109,11 +109,11 @@ internal sealed class ProfileEditor : UserControl
     private readonly string[] titles;
     internal ProfileEditor(ModifierBinding binding)
     {
-        model = binding; bare = binding.Modifier == "No modifier";
-        titles = bare ? new string[] { "Turn dial" } : new string[] { "Tap   -" + model.Modifier, "Hold   _" + model.Modifier, "Tap then hold   -_" + model.Modifier };
+        model = binding;
+        titles = new string[] { "Tap   -" + model.Modifier, "Hold   _" + model.Modifier, "Tap then hold   -_" + model.Modifier };
         BackColor = Color.WhiteSmoke;
-        enabled.Text = bare ? "Enable No modifier bindings" : "Enable " + model.Modifier + " gestures"; enabled.SetBounds(14, 10, 450, 28); enabled.Checked = model.Enabled;
-        var hint = new Label { Text = bare ? "Off by default; enabled inputs replace bare key presses." : "- tap    _ hold    -_ tap, release, hold again",
+        enabled.Text = "Enable " + model.Modifier + " gestures"; enabled.SetBounds(14, 10, 450, 28); enabled.Checked = model.Enabled;
+        var hint = new Label { Text = "- tap    _ hold    -_ tap, release, hold again",
             Location = new Point(450, 14), Size = new Size(420, 24), ForeColor = Color.DimGray };
         for (int i = 0; i < titles.Length; i++)
         {
@@ -122,10 +122,10 @@ internal sealed class ProfileEditor : UserControl
             button.Click += delegate { SaveVisible(); selected = index; Render(); };
             gestures.Add(button); Controls.Add(button);
         }
-        int inputY = bare ? 130 : 255;
+        int inputY = 255;
         var inputs = new GroupBox { Text = "Dial input keys", Location = new Point(14, inputY), Size = new Size(270, 108) };
         InputRow(inputs, "Clockwise", next, model.NextInput, 24); InputRow(inputs, "Counterclockwise", previous, model.PreviousInput, 61);
-        advanced.Text = "Advanced timing"; advanced.SetBounds(14, 376, 270, 28); advanced.Visible = !bare;
+        advanced.Text = "Advanced timing"; advanced.SetBounds(14, 376, 270, 28);
         advancedFields.SetBounds(14, 408, 270, 76); advancedFields.Visible = false;
         AddLabel(advancedFields, "Tap / second press (ms)", 0, 5, 172); wait.SetBounds(178, 0, 88, 28); wait.Value = model.TapWaitMs;
         AddLabel(advancedFields, "Maximum short press", 0, 43, 172); shortMax.SetBounds(178, 38, 88, 28); shortMax.Value = model.ShortPressMs;
@@ -154,7 +154,7 @@ internal sealed class ProfileEditor : UserControl
     }
     private static NumericUpDown Number(int min, int max) { return new NumericUpDown { Minimum = min, Maximum = max }; }
     private static ComboBox OutputBox()
-    { var c = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown }; c.Items.AddRange(new object[] { "Scroll up", "Scroll down", "B", "F", "S", "Space", "Ctrl", "Alt", "Shift" }); return c; }
+    { var c = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown }; c.Items.AddRange(new object[] { "No action", "Scroll up", "Scroll down", "B", "F", "S", "Space", "Ctrl", "Alt", "Shift" }); return c; }
     private void Notify() { if (Changed != null) Changed(this, EventArgs.Empty); }
     private static void AddLabel(Control parent, string text, int x, int y, int width)
     { parent.Controls.Add(new Label { Text = text, Location = new Point(x, y), Size = new Size(width, 28) }); }
@@ -174,8 +174,7 @@ internal sealed class ProfileEditor : UserControl
     }
     private string CurrentMode()
     {
-        if (bare) return model.HoldMode;
-        if (selected == 0) return model.TapOutput == "Scroll up" || model.TapOutput == "Scroll down" ? model.TapOutput : "Key / shortcut";
+        if (selected == 0) return model.TapOutput == "No action" || model.TapOutput == "Scroll up" || model.TapOutput == "Scroll down" ? model.TapOutput : "Key / shortcut";
         return selected == 1 ? model.HoldMode : model.DoubleHoldMode;
     }
     private void SaveVisible()
@@ -184,9 +183,9 @@ internal sealed class ProfileEditor : UserControl
         model.Enabled = enabled.Checked; model.NextInput = next.Text; model.PreviousInput = previous.Text;
         model.TapWaitMs = (int)wait.Value; model.ShortPressMs = (int)shortMax.Value;
         model.ScrollAmount = (int)amount.Value; model.ReverseScroll = reverse.Checked;
-        if (!bare && selected == 0) { if (CurrentMode() == "Key / shortcut") model.TapOutput = output.Text; }
-        else if (!bare && selected == 1) model.HoldOutput = output.Text;
-        else if (!bare) model.DoubleHoldOutput = output.Text;
+        if (selected == 0) { if (CurrentMode() == "Key / shortcut") model.TapOutput = output.Text; }
+        else if (selected == 1) model.HoldOutput = output.Text;
+        else model.DoubleHoldOutput = output.Text;
         model.HoldNextOutput = forward.Text; model.HoldPreviousOutput = backward.Text;
     }
     private void Render()
@@ -194,13 +193,12 @@ internal sealed class ProfileEditor : UserControl
         updating = true;
         string current = CurrentMode();
         detailTitle.Text = titles[selected] + " action";
-        output.Text = bare ? "Space" : selected == 0 ? model.TapOutput : selected == 1 ? model.HoldOutput : model.DoubleHoldOutput;
+        output.Text = selected == 0 ? model.TapOutput : selected == 1 ? model.HoldOutput : model.DoubleHoldOutput;
         forward.Text = model.HoldNextOutput; backward.Text = model.HoldPreviousOutput;
         while (choices.Controls.Count > 0) choices.Controls[0].Dispose(); modes.Clear();
-        string[] options = bare ? new string[] { "Custom outputs", "Cycle list", "Dial scrolling" }
-            : selected == 0 ? new string[] { "Key / shortcut", "Scroll up", "Scroll down" }
-            : selected == 1 ? new string[] { "Original modifier", "Cycle list", "Dial scrolling", "Hold a key" }
-            : new string[] { "Cycle list", "Dial scrolling", "Hold a key" };
+        string[] options = selected == 0 ? new string[] { "No action", "Key / shortcut", "Scroll up", "Scroll down" }
+            : selected == 1 ? new string[] { "No action", "Original modifier", "Cycle list", "Dial scrolling", "Hold a key" }
+            : new string[] { "No action", "Cycle list", "Dial scrolling", "Hold a key" };
         foreach (string option in options)
         {
             string value = option;
@@ -208,8 +206,7 @@ internal sealed class ProfileEditor : UserControl
             radio.CheckedChanged += delegate {
                 if (updating || !radio.Checked) return;
                 SaveVisible();
-                if (bare) model.HoldMode = value;
-                else if (selected == 0) model.TapOutput = value == "Key / shortcut" ? "B" : value;
+                if (selected == 0) model.TapOutput = value == "Key / shortcut" ? "B" : value;
                 else if (selected == 1) model.HoldMode = value; else model.DoubleHoldMode = value;
                 Render(); Notify();
             };
@@ -220,9 +217,10 @@ internal sealed class ProfileEditor : UserControl
         forwardRow.Visible = backwardRow.Visible = native;
         scrollFields.Visible = current == "Dial scrolling";
         cycleShown = current == "Cycle list"; cyclePanel.Visible = cycleShown; explanation.Visible = !cycleShown;
-        explanation.Text = current == "Hold a key" ? "The chosen key or chord stays pressed until you release the gesture.\r\nFor _ holds, it starts after Maximum short press (Advanced).\r\nFor -_ holds, it starts on the second press."
+        explanation.Text = current == "No action" ? "This gesture sends nothing. Dial steps in this gesture also do nothing.\r\nTo keep a normal native modifier hold, choose Original modifier."
+            : current == "Hold a key" ? "The chosen key or chord stays pressed until you release the gesture.\r\nFor _ holds, it starts after Maximum short press (Advanced).\r\nFor -_ holds, it starts on the second press."
             : current == "Dial scrolling" ? "Scrolling acts at the mouse pointer.\r\nHover over a slider or scrollable area before turning."
-            : native ? (bare ? "Each dial input sends its corresponding output once.\r\nOutputs can be shortcuts or Scroll up/down." : "The input keys on the left trigger these outputs.\r\nOriginal modifier keeps the native modifier held between steps.")
+            : native ? "The input keys on the left trigger these outputs.\r\nOriginal modifier keeps the native modifier held between steps."
             : "Choose a key or shortcut, or send one mouse-wheel notch.";
         updating = false; UpdateSummaries(); RenderEnabled();
     }
@@ -231,13 +229,13 @@ internal sealed class ProfileEditor : UserControl
     {
         for (int i = 0; i < gestures.Count; i++)
         {
-            string summary = bare ? model.HoldMode : i == 0 ? model.TapOutput : i == 1 ? model.HoldMode : model.DoubleHoldMode;
+            string summary = i == 0 ? model.TapOutput : i == 1 ? model.HoldMode : model.DoubleHoldMode;
             gestures[i].Text = titles[i] + "\r\n" + summary;
             gestures[i].BackColor = i == selected ? Color.FromArgb(219, 234, 249) : SystemColors.Control;
         }
         string mode = CurrentMode();
-        string start = bare ? "Turn the dial without holding a modifier: " : selected == 0 ? "Tap " + model.Modifier + ": " : selected == 1 ? "Hold " + model.Modifier + ": " : "Tap " + model.Modifier + ", release, then hold it: ";
-        preview.Text = start + (mode == "Cycle list" ? "turn to cycle this list." : mode == "Dial scrolling" ? "turn to scroll at the pointer." : mode == "Hold a key" ? "hold " + (selected == 1 ? model.HoldOutput : model.DoubleHoldOutput) + " until release." : mode == "Original modifier" ? "keep normal " + model.Modifier + "; turn for the configured outputs." : mode == "Custom outputs" ? "send the configured clockwise/counterclockwise outputs." : "send " + model.TapOutput + ".");
+        string start = selected == 0 ? "Tap " + model.Modifier + ": " : selected == 1 ? "Hold " + model.Modifier + ": " : "Tap " + model.Modifier + ", release, then hold it: ";
+        preview.Text = start + (mode == "No action" ? "do nothing." : mode == "Cycle list" ? "turn to cycle this list." : mode == "Dial scrolling" ? "turn to scroll at the pointer." : mode == "Hold a key" ? "hold " + (selected == 1 ? model.HoldOutput : model.DoubleHoldOutput) + " until release." : mode == "Original modifier" ? "keep normal " + model.Modifier + "; turn for the configured outputs." : mode == "Custom outputs" ? "send the configured clockwise/counterclockwise outputs." : "send " + model.TapOutput + ".");
     }
     internal ModifierBinding Read() { SaveVisible(); model.Tools = cycle.Read(); return model; }
     internal void PreviewAction(int gesture, string mode)
@@ -245,7 +243,6 @@ internal sealed class ProfileEditor : UserControl
     internal void VerifyActions()
     {
         int saved = selected;
-        if (!bare)
         {
             PreviewAction(0, "Key / shortcut"); output.Text = "F12";
             selected = 1; Render(); selected = 0; Render();
@@ -256,9 +253,11 @@ internal sealed class ProfileEditor : UserControl
         {
             SaveVisible(); selected = i; Render();
             int count = modes.Count;
-            for (int m = 0; m < count; m++) { modes[m].Checked = true; if (cycleShown != (CurrentMode() == "Cycle list")) throw new Exception("Irrelevant cycle controls visible."); }
+            bool foundNone = false;
+            for (int m = 0; m < count; m++)
+            { if (modes[m].Text == "No action") foundNone = true; modes[m].Checked = true; if (cycleShown != (CurrentMode() == "Cycle list")) throw new Exception("Irrelevant cycle controls visible."); }
+            if (!foundNone) throw new Exception("No action missing for a gesture.");
         }
-        if (bare) { model.Enabled = true; enabled.Checked = true; model.HoldMode = "Dial scrolling"; amount.Value = 3; reverse.Checked = true; }
         selected = saved; Render();
     }
 }
