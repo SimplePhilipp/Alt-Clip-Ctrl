@@ -14,6 +14,10 @@ public sealed class ToolBinding
 
 public sealed class ModifierBinding
 {
+    public string DoubleHoldMode { get; set; }
+    public string DoubleHoldOutput { get; set; }
+    public string HoldMode { get; set; }
+    public string HoldOutput { get; set; }
     public string Modifier { get; set; }
     public bool Enabled { get; set; }
     public string NextInput { get; set; }
@@ -50,12 +54,18 @@ public sealed class AppSettings
     {
         if (Modifiers == null) return;
         foreach (ModifierBinding m in Modifiers)
+        {
+            if (string.IsNullOrEmpty(m.DoubleHoldMode)) m.DoubleHoldMode = "Cycle list";
+            if (string.IsNullOrEmpty(m.DoubleHoldOutput)) m.DoubleHoldOutput = "Space";
+            if (string.IsNullOrEmpty(m.HoldMode)) m.HoldMode = "Original modifier";
+            if (string.IsNullOrEmpty(m.HoldOutput)) m.HoldOutput = m.Modifier;
             if (m.Tools == null || (m.Tools.Count == 0 && Tools != null && Tools.Count > 0))
             {
                 m.Tools = new List<ToolBinding>();
                 if (Tools != null) foreach (ToolBinding t in Tools)
                     m.Tools.Add(new ToolBinding { Name = t.Name, Shortcut = t.Shortcut });
             }
+        }
         Tools = null;
     }
     public bool ShouldSerializeTools() { return Tools != null; }
@@ -67,9 +77,15 @@ public sealed class AppSettings
         foreach (ModifierBinding m in Modifiers)
         {
             int family = KeyChord.ModifierKey(m.Modifier);
+            if (m.DoubleHoldMode != "Cycle list" && m.DoubleHoldMode != "Dial scrolling" && m.DoubleHoldMode != "Hold a key")
+                throw new ArgumentException(m.Modifier + ": choose a valid tap-hold action.");
+            KeyChord.ParseHold(m.DoubleHoldOutput);
+            if (m.HoldMode != "Original modifier" && m.HoldMode != "Cycle list" && m.HoldMode != "Dial scrolling" && m.HoldMode != "Hold a key")
+                throw new ArgumentException(m.Modifier + ": choose a valid hold action.");
+            KeyChord.ParseHold(m.HoldOutput);
             if (!families.Add(m.Modifier)) throw new ArgumentException("Duplicate modifier profile: " + m.Modifier);
             KeyChord next = KeyChord.Parse(m.NextInput), previous = KeyChord.Parse(m.PreviousInput);
-            if (next.Modifiers != 0 || previous.Modifiers != 0 || next.Key == previous.Key)
+            if (next.IsWheel || previous.IsWheel || next.Modifiers != 0 || previous.Modifiers != 0 || next.Key == previous.Key)
                 throw new ArgumentException(m.Modifier + ": rotation inputs must be two different single keys.");
             if (KeyChord.InFamily(next.Key, family) || KeyChord.InFamily(previous.Key, family))
                 throw new ArgumentException(m.Modifier + ": a rotation input cannot be the activation modifier.");
@@ -124,15 +140,25 @@ public sealed class AppSettings
     internal static void SelfTest()
     {
         AppSettings s = Defaults(); s.Validate();
+        s.Modifiers[0].HoldMode = "Dial scrolling"; s.Modifiers[0].HoldNextOutput = "Scroll up";
+        s.Modifiers[1].DoubleHoldMode = "Hold a key"; s.Modifiers[1].DoubleHoldOutput = "Ctrl";
+        s.Modifiers[2].HoldMode = "Hold a key"; s.Modifiers[2].HoldOutput = "Shift+Space";
         s.DetectClipStudio = false; s.Enabled = false;
         s.Modifiers[1].Enabled = false; s.Modifiers[2].TapOutput = "Ctrl+Shift+F4";
         s.Modifiers[0].Tools[0].Shortcut = "Alt+P";
         AppSettings copy = s.Clone(); copy.Validate();
+        if (copy.Modifiers[0].HoldMode != "Dial scrolling" || copy.Modifiers[0].HoldNextOutput != "Scroll up" || copy.Modifiers[1].DoubleHoldOutput != "Ctrl" || copy.Modifiers[2].HoldOutput != "Shift+Space")
+            throw new Exception("Action/scroll settings round-trip.");
         if (copy.Enabled || copy.DetectClipStudio || copy.Modifiers[1].Enabled || copy.Modifiers[2].TapOutput != "Ctrl+Shift+F4" || copy.Modifiers[0].Tools[0].Shortcut != "Alt+P" || copy.Modifiers[1].Tools[0].Shortcut != "1")
             throw new Exception("Config serialization round-trip.");
         s = Defaults(); s.Modifiers[0].Tools[1].Shortcut = s.Modifiers[0].Tools[0].Shortcut;
         bool rejected = false; try { s.Validate(); } catch (ArgumentException) { rejected = true; }
         if (!rejected) throw new Exception("Duplicate tool shortcuts accepted.");
+        s = Defaults(); s.Modifiers[0].NextInput = "Scroll up"; rejected = false;
+        try { s.Validate(); } catch (ArgumentException) { rejected = true; }
+        if (!rejected) throw new Exception("Scroll accepted as a keyboard input.");
+        rejected = false; try { KeyChord.ParseHold("WheelUp"); } catch (ArgumentException) { rejected = true; }
+        if (!rejected) throw new Exception("Wheel output accepted as a held key.");
         // Simulate an actual v1.0 XML document with a root Tools list.
         s = Defaults(); s.Tools = s.Modifiers[0].Tools;
         foreach (ModifierBinding profile in s.Modifiers) profile.Tools = null;
@@ -146,7 +172,7 @@ public sealed class AppSettings
             migrated.Modifiers[0].Tools[0].Shortcut = "F12";
             if (migrated.Modifiers[2].Tools[0].Shortcut != "1") throw new Exception("Migrated cycles share objects.");
         }
-        foreach (string text in new string[] { "B", "Ctrl+Shift+F1", "Alt+Tab", "[", "]", "Space", "Shift+Plus", "Win+Left" })
+        foreach (string text in new string[] { "B", "Ctrl+Shift+F1", "Alt+Tab", "[", "]", "Space", "Shift+Plus", "Win+Left", "Scroll up", "WheelDown", "Ctrl+Scroll down" })
         {
             KeyChord c = KeyChord.Parse(text), roundTrip = KeyChord.Parse(KeyChord.Parse(text).ToString());
             if (c.Key != roundTrip.Key || c.Modifiers != roundTrip.Modifiers) throw new Exception("Shortcut parsing: " + text);
@@ -156,6 +182,8 @@ public sealed class AppSettings
 
 internal sealed class KeyChord
 {
+    internal const ushort WheelUp = 0x100, WheelDown = 0x101;
+    internal bool IsWheel { get { return Key == WheelUp || Key == WheelDown; } }
     internal const int Control = 1, Alt = 2, Shift = 4, Win = 8;
     internal ushort Key;
     internal int Modifiers;
@@ -173,6 +201,16 @@ internal sealed class KeyChord
         return key == 0x10 || key == 0xA0 || key == 0xA1;
     }
     internal static int FamilyFlag(int family) { return family == 0x12 ? Alt : family == 0x11 ? Control : Shift; }
+    internal static KeyChord ParseHold(string text)
+    {
+        string name = (text ?? "").Trim().ToUpperInvariant();
+        ushort modifier = name == "CTRL" || name == "CONTROL" ? (ushort)0xA2 : name == "ALT" ? (ushort)0xA4
+            : name == "SHIFT" ? (ushort)0xA0 : name == "WIN" || name == "WINDOWS" ? (ushort)0x5B : (ushort)0;
+        if (modifier != 0) return new KeyChord { Key = modifier };
+        KeyChord chord = Parse(text);
+        if (chord.IsWheel) throw new ArgumentException("A scroll notch cannot be held. Choose Dial scrolling instead.");
+        return chord;
+    }
     internal static KeyChord Parse(string text)
     {
         if (string.IsNullOrWhiteSpace(text)) throw new ArgumentException("A shortcut cannot be empty.");
@@ -191,7 +229,10 @@ internal sealed class KeyChord
         }
         string key = parts[parts.Length - 1].Trim();
         ushort vk;
-        if (key.Length == 1 && ((key[0] >= 'a' && key[0] <= 'z') || (key[0] >= 'A' && key[0] <= 'Z') || (key[0] >= '0' && key[0] <= '9')))
+        string wheelName = key.Replace(" ", "").ToUpperInvariant();
+        if (wheelName == "WHEELUP" || wheelName == "SCROLLUP") vk = WheelUp;
+        else if (wheelName == "WHEELDOWN" || wheelName == "SCROLLDOWN") vk = WheelDown;
+        else if (key.Length == 1 && ((key[0] >= 'a' && key[0] <= 'z') || (key[0] >= 'A' && key[0] <= 'Z') || (key[0] >= '0' && key[0] <= '9')))
             vk = char.ToUpperInvariant(key[0]);
         else if (key == "[") vk = 0xDB;
         else if (key == "]") vk = 0xDD;
@@ -213,7 +254,8 @@ internal sealed class KeyChord
     }
     public override string ToString()
     {
-        string name = Key == 0xDB ? "[" : Key == 0xDD ? "]" : Key == 0xBB ? "Plus" : Key == 0xBD ? "Minus"
+        string name = Key == 0xA2 ? "Ctrl" : Key == 0xA4 ? "Alt" : Key == 0xA0 ? "Shift" : Key == 0x5B ? "Win"
+            : Key == WheelUp ? "Scroll up" : Key == WheelDown ? "Scroll down" : Key == 0xDB ? "[" : Key == 0xDD ? "]" : Key == 0xBB ? "Plus" : Key == 0xBD ? "Minus"
             : Key >= 0x30 && Key <= 0x39 ? ((char)Key).ToString() : ((Keys)Key).ToString();
         return ((Modifiers & Control) != 0 ? "Ctrl+" : "") + ((Modifiers & Alt) != 0 ? "Alt+" : "")
             + ((Modifiers & Shift) != 0 ? "Shift+" : "") + ((Modifiers & Win) != 0 ? "Win+" : "") + name;

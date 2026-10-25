@@ -41,11 +41,28 @@ The default tap wait is **100 ms**: start the second press within that window af
 
 - **Enable Alt Clip Ctrl:** persistent global on/off switch.
 - **Auto-detect Clip Studio Paint:** on by default, limiting bindings to CSP. Off lets bindings work in other foreground apps too. The helper's own windows, including Config and key recording, are always excluded.
-- **Alt / Ctrl / Shift tabs:** enable or disable each modifier independently. Change forward/backward input keys, tap output, held-input outputs, and timings. An ordinary hold always remains its original modifier.
+- **Alt / Ctrl / Shift tabs:** enable or disable each modifier independently. Change forward/backward input keys, tap output, held-input outputs, timings, and the separate `_` / `-_` action selectors. Scroll the profile panel to reach timings and help.
 - **Record:** press a keyboard key or combination instead of typing its name. Rotation inputs must be single keys. Outputs support combinations such as `Ctrl+Shift+F1`. You can also type names such as `Space`, `Escape`, `Plus`, or `Minus`; Win combinations can be typed manually.
 - **Alt cycle / Ctrl cycle / Shift cycle:** three independent lists with separate remembered positions. Edit names and shortcuts, reorder rows, add rows at the bottom, or remove tools. Each list supports 1-64 tools with unique names and shortcuts within that list. Different cycles may share shortcuts.
 - **Notation:** explains `-`, `_`, `-_`, and `+` with examples.
 - **Restore defaults:** fills the dialog with defaults. Save applies them; Cancel leaves the running config unchanged.
+
+### Hold actions and scrolling
+
+For each modifier, `_` and `-_` have independent action choices:
+
+| Action | Result |
+| --- | --- |
+| Original modifier (`_` only, default) | Normal native Alt/Ctrl/Shift; the configured forward/backward outputs remain available. |
+| Cycle list | Turning the dial moves through that modifier's configured list. |
+| Dial scrolling | Forward sends one scroll-up notch; backward sends one scroll-down notch. |
+| Hold a key | Holds the configured key or chord until the gesture ends. Examples: Space, B, Ctrl, Alt, Shift, Ctrl+Shift+F1. |
+
+The default `-_` action remains Cycle list. Existing settings retain their previous behavior. Choosing a custom `_` action replaces that modifier's ordinary native hold. To distinguish a tap from an ordinary custom held key, that key starts after **Maximum short press** (default 300 ms). `-_` held keys start on the second press; dial steps for Cycle list / Dial scrolling act immediately. Custom held outputs are released on gesture release, focus change, pause, disabling, applying settings, or exiting the app. Ordinary native holds remain immediate in Original modifier mode.
+
+The tap and ordinary forward/backward output fields also offer **Scroll up** and **Scroll down** in editable dropdowns. `WheelUp` / `WheelDown` are accepted aliases; modifier combinations such as `Ctrl+Scroll up` can be typed. One output is one standard wheel notch. Rotation inputs still require keyboard keys.
+
+Scrolling acts at the mouse pointer according to the target application's wheel handling. For a color slider, hover over the slider before turning; wheel output does not automatically locate or adjust a color wheel. Example: set `_Ctrl action` to Dial scrolling and `-_Ctrl action` to Cycle list to use the same dial for both.
 
 Save writes **AltClipCtrl.settings.xml** beside the executable. Keep that file when upgrading to retain your settings. No keystroke history is written. The included **AltClipCtrl.settings.example.xml** shows default settings but is not loaded automatically. If Save fails, move the app to a writable folder.
 
@@ -107,7 +124,7 @@ The smoke test initializes the app and Config tabs, produces preview images, and
 
 ## Verification
 
-Checked: independent cycle positions and wraparound; switching between cycles; different per-cycle lists and shortcut matching; legacy XML migration with independent copies; editing and reloading the three cycle grids; gesture regressions and rapid simulated dial sequences; Alt/Ctrl/Shift routing together; disable switches; native modifier holds and multi-modifier shortcuts; custom bindings; chord output and modifier restoration; config validation/serialization; custom icon, notation page, and startup/shutdown.
+Checked: all hold/tap-hold action choices and XML/UI round-trips; wheel direction, notch count and output tagging; held key/chord down/up balance and cleanup on release, disabling, scope changes, applying settings and shutdown using diagnostic input capture; independent cycles and migration; gesture regressions and simulated dial sequences; native modifier holds and shortcuts; custom bindings and output modifier restoration. Diagnostic tests send no real keys or scroll events.
 
 The rendered UI was visually checked. Actual selection and latency in CSP still need testing with your dial and workspace. No hardware performance result is claimed. Diagnostic command-line modes are `--self-test <report-path>` and `--smoke-test <report-path>`; the latter also writes UI previews beside its report.
 

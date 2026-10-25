@@ -25,6 +25,7 @@ internal sealed class KeySnapshot
     internal bool MouseHeld { get { return held[1] || held[2] || held[4] || held[5] || held[6]; } }
     internal bool OtherKeysHeld { get { return otherCount != 0; } }
     internal void Clear() { Array.Clear(held, 0, held.Length); otherCount = 0; }
+    internal bool IsDown(int key) { return key >= 0 && key < held.Length && held[key]; }
     internal void Set(int key, bool down)
     {
         if (key < 0 || key >= held.Length || held[key] == down) return;
@@ -75,6 +76,8 @@ internal sealed class ModifierGestures
     private int nestedInjectedModifier;
     private bool pendingInjectedModifier;
     internal bool DialActive { get { return secondPress && heldModifier != 0 && !conflictingModifier; } }
+    internal bool OrdinaryHeld { get { return !secondPress && heldModifier != 0 && !conflictingModifier; } }
+    internal bool HoldReady(uint now) { return OrdinaryHeld && unchecked(now - started) > shortPress; }
     internal static bool IsAlt(int key) { return key == 0xA4 || key == 0xA5 || key == 0x12; }
 
     internal void Reset()
@@ -325,6 +328,8 @@ internal static class Native
     internal static extern bool PostMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam);
     [StructLayout(LayoutKind.Sequential)] internal struct KBDLLHOOKSTRUCT
     { internal uint vkCode, scanCode, flags, time; internal UIntPtr dwExtraInfo; }
+    [StructLayout(LayoutKind.Sequential)] internal struct MSLLHOOKSTRUCT
+    { internal int x, y; internal uint mouseData, flags, time; internal UIntPtr dwExtraInfo; }
     [DllImport("user32.dll")] internal static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] internal static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
     [DllImport("user32.dll")] internal static extern short GetAsyncKeyState(int key);

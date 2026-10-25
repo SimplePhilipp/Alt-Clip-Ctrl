@@ -6,7 +6,7 @@ internal sealed class RuntimeProfile
 {
     internal ModifierBinding Binding;
     internal ModifierGestures State;
-    internal KeyChord Tap, Forward, Backward;
+    internal KeyChord Tap, Forward, Backward, HoldOutput, OrdinaryOutput;
 }
 
 internal struct GestureResult
@@ -67,7 +67,7 @@ internal sealed class GestureBank
         var list = new List<RuntimeProfile>();
         foreach (ModifierBinding p in settings.Modifiers)
             list.Add(new RuntimeProfile { Binding = p, Tap = KeyChord.Parse(p.TapOutput), Forward = KeyChord.Parse(p.HoldNextOutput),
-                Backward = KeyChord.Parse(p.HoldPreviousOutput), State = new ModifierGestures(KeyChord.ModifierKey(p.Modifier),
+                Backward = KeyChord.Parse(p.HoldPreviousOutput), HoldOutput = KeyChord.ParseHold(p.DoubleHoldOutput), OrdinaryOutput = KeyChord.ParseHold(p.HoldOutput), State = new ModifierGestures(KeyChord.ModifierKey(p.Modifier),
                     KeyChord.Parse(p.NextInput).Key, KeyChord.Parse(p.PreviousInput).Key, (uint)p.TapWaitMs, (uint)p.ShortPressMs) });
         Profiles = list.ToArray();
     }
@@ -94,10 +94,13 @@ internal sealed class GestureBank
         {
             RuntimeProfile p = Profiles[i];
             if (!p.Binding.Enabled) continue;
+            bool activation = p.State.IsActivation((int)key.vkCode);
+            if (!activation && ((p.State.DialActive && p.Binding.DoubleHoldMode == "Hold a key") || (p.State.OrdinaryHeld && p.Binding.HoldMode == "Hold a key"))) continue;
             int otherModifiers = keys.ModifierFlags & ~KeyChord.FamilyFlag(p.State.Family);
             bool alone = otherModifiers == 0 && !keys.MouseHeld;
             if (p.State.IsActivation((int)key.vkCode)) alone = alone && !keys.OtherKeysExcept(p.State.Family);
             GestureAction action = p.State.InputEvent(key, down, alone);
+            if (activation && down && p.Binding.HoldMode != "Original modifier") action |= GestureAction.Consume;
             if (action != GestureAction.None)
             {
                 if (result.Profile >= 0 && result.Profile != i) { Reset(); return new GestureResult { Profile = -1 }; }
@@ -151,6 +154,29 @@ internal sealed class GestureBank
             g.Reset(); g.KeyEvent(vk, true, 100, true); g.KeyEvent(0x43, true, 130, true); g.KeyEvent(vk, false, 180, true);
             if (g.Poll(400)) throw new Exception("Native shortcut generated stray tap.");
         }
+        foreach (string mode in new string[] { "Cycle list", "Dial scrolling", "Hold a key" })
+        {
+            var settings = AppSettings.Defaults(); settings.Modifiers[1].DoubleHoldMode = mode;
+            var router = new GestureBank(settings); var snapshot = new KeySnapshot();
+            Route(router, snapshot, 0xA2, true, 100); Route(router, snapshot, 0xA2, false, 160); Route(router, snapshot, 0xA2, true, 220);
+            GestureResult notch = Route(router, snapshot, 0xDD, true, 240);
+            if (mode == "Hold a key" ? notch.Action != GestureAction.None : (notch.Action & GestureAction.Next) == 0)
+                throw new Exception("Tap-hold action routing: " + mode);
+            Route(router, snapshot, 0xDD, false, 250); Route(router, snapshot, 0xA2, false, 900);
+            if (router.DialOwner != -1) throw new Exception("Tap-hold action release.");
+        }
+        foreach (string mode in new string[] { "Original modifier", "Cycle list", "Dial scrolling", "Hold a key" })
+        {
+            var settings = AppSettings.Defaults(); settings.Modifiers[2].HoldMode = mode;
+            var router = new GestureBank(settings); var snapshot = new KeySnapshot();
+            GestureResult press = Route(router, snapshot, 0xA0, true, 100);
+            if (((press.Action & GestureAction.Consume) != 0) != (mode != "Original modifier")) throw new Exception("Ordinary modifier passthrough/override.");
+            if (router.Profiles[2].State.HoldReady(400) || !router.Profiles[2].State.HoldReady(401)) throw new Exception("Ordinary hold threshold.");
+            GestureResult notch = Route(router, snapshot, 0xDD, true, 450);
+            if (mode == "Hold a key" ? notch.Action != GestureAction.None : (notch.Action & GestureAction.HoldForward) == 0) throw new Exception("Ordinary action routing.");
+            Route(router, snapshot, 0xDD, false, 460); Route(router, snapshot, 0xA0, false, 900);
+            if (router.Profiles[2].State.OrdinaryHeld || router.Poll(1100) != -1) throw new Exception("Ordinary action release/tap leakage.");
+        }
         AppSettings s = AppSettings.Defaults();
         foreach (ModifierBinding p in s.Modifiers) p.Enabled = false;
         var bank = new GestureBank(s); var keys = new KeySnapshot();
@@ -173,6 +199,26 @@ internal sealed class GestureBank
 
 internal static class InputBuilder
 {
+    internal static int OutputModifiers(KeyChord chord)
+    {
+        int flags = chord.Modifiers;
+        foreach (int family in new int[] { 0x12, 0x11, 0x10 })
+            if (KeyChord.InFamily(chord.Key, family)) flags |= KeyChord.FamilyFlag(family);
+        if (chord.Key == 0x5B || chord.Key == 0x5C) flags |= KeyChord.Win;
+        return flags;
+    }
+    internal static Native.INPUT[] Hold(KeyChord chord, bool release)
+    {
+        var keys = new List<ushort>();
+        if ((chord.Modifiers & KeyChord.Control) != 0) keys.Add(0xA2);
+        if ((chord.Modifiers & KeyChord.Alt) != 0) keys.Add(0xA4);
+        if ((chord.Modifiers & KeyChord.Shift) != 0) keys.Add(0xA0);
+        if ((chord.Modifiers & KeyChord.Win) != 0) keys.Add(0x5B);
+        if (!keys.Contains(chord.Key)) keys.Add(chord.Key);
+        if (release) keys.Reverse();
+        var input = new List<Native.INPUT>(); foreach (ushort key in keys) input.Add(Key(key, release));
+        return input.ToArray();
+    }
     internal static Native.INPUT Key(ushort key, bool up)
     {
         var input = new Native.INPUT(); input.type = 1;
@@ -188,7 +234,15 @@ internal static class InputBuilder
         ushort[] modifiers = { 0xA2, 0xA4, 0xA0, 0x5B };
         int[] flags = { KeyChord.Control, KeyChord.Alt, KeyChord.Shift, KeyChord.Win };
         for (int i = 0; i < 4; i++) if ((chord.Modifiers & flags[i]) != 0) input.Add(Key(modifiers[i], false));
-        input.Add(Key(chord.Key, false)); input.Add(Key(chord.Key, true));
+        if (chord.IsWheel)
+        {
+            var wheel = new Native.INPUT(); wheel.type = 0;
+            wheel.data.mi.dwFlags = 0x0800;
+            wheel.data.mi.mouseData = chord.Key == KeyChord.WheelUp ? 120u : unchecked((uint)-120);
+            wheel.data.mi.dwExtraInfo = new UIntPtr(ModifierGestures.OwnInputMarker);
+            input.Add(wheel);
+        }
+        else { input.Add(Key(chord.Key, false)); input.Add(Key(chord.Key, true)); }
         for (int i = 3; i >= 0; i--) if ((chord.Modifiers & flags[i]) != 0) input.Add(Key(modifiers[i], true));
     }
     internal static Native.INPUT[] Build(KeyChord chord)
@@ -220,20 +274,40 @@ internal static class InputBuilder
     }
     internal static void SelfTest()
     {
+        foreach (string text in new string[] { "Space", "Ctrl", "Alt", "Shift", "Win", "Ctrl+Shift+F1" })
+        {
+            KeyChord hold = KeyChord.ParseHold(text), copy = KeyChord.ParseHold(KeyChord.ParseHold(text).ToString());
+            if (text == "Ctrl" && OutputModifiers(hold) != KeyChord.Control) throw new Exception("Held modifier shortcut tracking.");
+            if (hold.Key != copy.Key || hold.Modifiers != copy.Modifiers) throw new Exception("Held output round-trip.");
+            var held = new HashSet<ushort>();
+            foreach (Native.INPUT item in Hold(hold, false))
+            { if (item.type != 1 || item.data.ki.dwFlags == 2 || !held.Add(item.data.ki.wVk)) throw new Exception("Held output down edges."); }
+            foreach (Native.INPUT item in Hold(hold, true))
+            { if ((item.data.ki.dwFlags & 2) == 0 || !held.Remove(item.data.ki.wVk)) throw new Exception("Held output up edges."); }
+            if (held.Count != 0) throw new Exception("Held output stuck keys.");
+        }
         if (Marshal.SizeOf(typeof(Native.INPUT)) != (IntPtr.Size == 8 ? 40 : 28)) throw new Exception("Native INPUT size.");
-        foreach (string text in new string[] { "B", "Ctrl+Shift+F1", "Alt+Tab", "Win+Left" })
+        foreach (string text in new string[] { "B", "Ctrl+Shift+F1", "Alt+Tab", "Win+Left", "Scroll up", "Scroll down", "Ctrl+WheelUp" })
         {
             KeyChord chord = KeyChord.Parse(text);
             foreach (bool restore in new bool[] { false, true })
             {
                 ushort[] held = { 0xA4, 0xA0, 0xA2 };
                 var down = new HashSet<ushort>(held);
+                int wheels = 0;
                 foreach (Native.INPUT input in WithHeld(chord, held, restore))
                 {
+                    if (input.type == 0)
+                    {
+                        if (!chord.IsWheel || input.data.mi.dwFlags != 0x0800 || input.data.mi.mouseData != (chord.Key == KeyChord.WheelUp ? 120u : unchecked((uint)-120))
+                            || input.data.mi.dwExtraInfo.ToUInt64() != ModifierGestures.OwnInputMarker) throw new Exception("Wheel output flags/direction/tagging.");
+                        wheels++; continue;
+                    }
                     if (input.type != 1 || input.data.ki.dwExtraInfo.ToUInt64() != ModifierGestures.OwnInputMarker) throw new Exception("Output tagging.");
                     if ((input.data.ki.dwFlags & 2) != 0) down.Remove(input.data.ki.wVk); else down.Add(input.data.ki.wVk);
                 }
                 if (restore ? !down.SetEquals(held) : down.Count != 0) throw new Exception("Output modifier restoration.");
+                if (wheels != (chord.IsWheel ? 1 : 0)) throw new Exception("Wheel notch count.");
             }
         }
     }

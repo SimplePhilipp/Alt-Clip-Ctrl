@@ -95,6 +95,10 @@
           <Shortcut>F11</Shortcut>
         </ToolBinding>
       </Tools>
+      <HoldMode>Original modifier</HoldMode>
+      <HoldOutput>Alt</HoldOutput>
+      <DoubleHoldMode>Cycle list</DoubleHoldMode>
+      <DoubleHoldOutput>Space</DoubleHoldOutput>
     </ModifierBinding>
     <ModifierBinding>
       <Modifier>Ctrl</Modifier>
@@ -188,6 +192,10 @@
           <Shortcut>F11</Shortcut>
         </ToolBinding>
       </Tools>
+      <HoldMode>Original modifier</HoldMode>
+      <HoldOutput>Ctrl</HoldOutput>
+      <DoubleHoldMode>Cycle list</DoubleHoldMode>
+      <DoubleHoldOutput>Space</DoubleHoldOutput>
     </ModifierBinding>
     <ModifierBinding>
       <Modifier>Shift</Modifier>
@@ -281,6 +289,10 @@
           <Shortcut>F11</Shortcut>
         </ToolBinding>
       </Tools>
+      <HoldMode>Original modifier</HoldMode>
+      <HoldOutput>Shift</HoldOutput>
+      <DoubleHoldMode>Cycle list</DoubleHoldMode>
+      <DoubleHoldOutput>Space</DoubleHoldOutput>
     </ModifierBinding>
   </Modifiers>
 </AppSettings>

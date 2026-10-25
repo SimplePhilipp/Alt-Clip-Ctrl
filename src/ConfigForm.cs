@@ -25,11 +25,15 @@ internal sealed class ConfigForm : Form
         "-_Alt + ]   In that held-second-press mode, ] selects the next tool.\r\n\r\n" +
         "Replace Alt with Ctrl or Shift for their profiles. Each profile can\r\n" +
         "be enabled or disabled and can have different inputs and outputs.\r\n" +
-        "An ordinary hold always stays the original modifier.\r\n\r\n" +
+        "Choose the _ and -_ actions independently for each modifier:\r\n" +
+        "Cycle list, Dial scrolling, or Hold a key. _ also offers Original modifier.\r\n" +
+        "Custom _ held keys start after Maximum short press (default 300 ms).\r\n" +
+        "Cycle/scroll dial steps act immediately. Release ends a held key.\r\n\r\n" +
         "Start the second press within the configured tap-wait window.\r\n" +
         "B waits for that same window so dial entry does not also send B.\r\n" +
         "Release the second held press to leave dial mode.\r\n\r\n" +
         "Shortcut text examples: B, F12, Space, Ctrl+Shift+F1, Alt+Left.\r\n" +
+        "Choose Scroll up/down for wheel outputs. Held keys can also be Ctrl/Alt/Shift.\r\n" +
         "Use Plus or Minus for those keys. Outputs can be key combinations;\r\n" +
         "rotation inputs must be single keyboard keys. CSP assignments must\r\n" +
         "match that modifier's cycle tab; this app does not edit CSP's settings.\r\n" +
@@ -156,6 +160,7 @@ internal sealed class ConfigForm : Form
         if (reloaded.Modifiers[1].Tools[0].Name != "Ctrl custom" || reloaded.Modifiers[2].Tools[0].Name != "Sketch")
             throw new Exception("Cycle UI round-trip.");
         LoadSettings(fromUi);
+        foreach (ProfileEditor editor in profiles) editor.VerifyActions();
     }
     private static void CreateHandles(Control control)
     {
@@ -169,26 +174,49 @@ internal sealed class ProfileEditor : UserControl
     private readonly string modifier;
     private readonly CheckBox enabled = new CheckBox();
     private readonly Panel fields = new Panel();
-    private readonly TextBox next = new TextBox(), previous = new TextBox(), tap = new TextBox(), forward = new TextBox(), backward = new TextBox();
+    private readonly TextBox next = new TextBox(), previous = new TextBox();
+    private readonly ComboBox tap = OutputChoices(), forward = OutputChoices(), backward = OutputChoices();
+    private readonly ComboBox doubleMode = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown };
+    private readonly ComboBox doubleOutput = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown };
+    private readonly ComboBox holdMode = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown };
+    private readonly ComboBox holdOutput = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown };
+    private static ComboBox OutputChoices()
+    {
+        var box = new ComboBox { DropDownStyle = ComboBoxStyle.DropDown };
+        box.Items.AddRange(new object[] { "Scroll up", "Scroll down", "B", "F", "S" });
+        return box;
+    }
     private readonly NumericUpDown wait = new NumericUpDown(), shortMax = new NumericUpDown();
     internal ProfileEditor(ModifierBinding p)
     {
         modifier = p.Modifier;
-        enabled.Text = "Enable " + modifier + " gestures"; enabled.SetBounds(18, 16, 500, 28); enabled.Checked = p.Enabled;
-        fields.SetBounds(0, 52, 716, 420); fields.Enabled = p.Enabled;
+        enabled.Text = "Enable " + modifier + " gestures (scroll down for timings)"; enabled.SetBounds(18, 16, 500, 28); enabled.Checked = p.Enabled;
+        fields.SetBounds(0, 52, 716, 420); fields.AutoScroll = true; fields.Enabled = p.Enabled;
         enabled.CheckedChanged += delegate { fields.Enabled = enabled.Checked; };
         AddRow("Forward / next input", next, p.NextInput, 0, true);
-        AddRow("Backward / previous input", previous, p.PreviousInput, 48, true);
-        AddRow("-" + modifier + " output", tap, p.TapOutput, 96, false);
-        AddRow("_" + modifier + " + forward input output", forward, p.HoldNextOutput, 144, false);
-        AddRow("_" + modifier + " + backward input output", backward, p.HoldPreviousOutput, 192, false);
-        AddNumber("Tap wait / second-press window (ms)", wait, p.TapWaitMs, 246);
-        AddNumber("Maximum short press (ms)", shortMax, p.ShortPressMs, 294);
-        fields.Controls.Add(new Label { Text = "_" + modifier + " alone stays normal " + modifier + ".\r\n-_" + modifier + " enables tool cycling while the second press is held.\r\nOutput example: Ctrl+Shift+F1. Rotation inputs must be single keys.",
-            Location = new Point(18, 350), Size = new Size(680, 70) });
+        AddRow("Backward / previous input", previous, p.PreviousInput, 40, true);
+        AddRow("-" + modifier + " output", tap, p.TapOutput, 80, false);
+        AddRow("_" + modifier + " + forward input output", forward, p.HoldNextOutput, 120, false);
+        AddRow("_" + modifier + " + backward input output", backward, p.HoldPreviousOutput, 160, false);
+        fields.Controls.Add(new Label { Text = "_" + modifier + " action", Location = new Point(18, 205), Size = new Size(310, 30) });
+        holdMode.Items.AddRange(new object[] { "Original modifier", "Cycle list", "Dial scrolling", "Hold a key" });
+        holdMode.SetBounds(335, 200, 361, 30); fields.Controls.Add(holdMode);
+        holdOutput.Items.AddRange(new object[] { "Space", "Ctrl", "Alt", "Shift", "B" });
+        AddRow("_" + modifier + " held output (Hold a key only)", holdOutput, p.HoldOutput, 240, false);
+        fields.Controls.Add(new Label { Text = "-_" + modifier + " action", Location = new Point(18, 285), Size = new Size(310, 30) });
+        doubleMode.Items.AddRange(new object[] { "Cycle list", "Dial scrolling", "Hold a key" });
+        doubleMode.SetBounds(335, 280, 361, 30); fields.Controls.Add(doubleMode);
+        doubleOutput.Items.AddRange(new object[] { "Space", "Ctrl", "Alt", "Shift", "B" });
+        AddRow("-_" + modifier + " held output (Hold a key only)", doubleOutput, p.DoubleHoldOutput, 320, false);
+        AddNumber("Tap wait / second-press window (ms)", wait, p.TapWaitMs, 365);
+        AddNumber("Maximum short press (ms)", shortMax, p.ShortPressMs, 405);
+        fields.Controls.Add(new Label { Text = "Scroll this panel for timings. Original modifier keeps the normal hold.\r\nCustom _ held keys start after Maximum short press; dial steps act immediately.\r\n-_ uses its own action. Dial scrolling sends wheel notches at the mouse pointer.",
+            Location = new Point(18, 449), Size = new Size(680, 75) });
         Controls.Add(enabled); Controls.Add(fields);
+        holdMode.SelectedIndex = Math.Max(0, holdMode.FindStringExact(p.HoldMode));
+        doubleMode.SelectedIndex = Math.Max(0, doubleMode.FindStringExact(p.DoubleHoldMode));
     }
-    private void AddRow(string title, TextBox box, string value, int y, bool single)
+    private void AddRow(string title, Control box, string value, int y, bool single)
     {
         fields.Controls.Add(new Label { Text = title, Location = new Point(18, y + 5), Size = new Size(310, 30) });
         box.Text = value; box.SetBounds(335, y, 225, 30); fields.Controls.Add(box);
@@ -204,10 +232,28 @@ internal sealed class ProfileEditor : UserControl
     }
     internal ModifierBinding Read()
     {
+        if (doubleMode.SelectedIndex < 0 || holdMode.SelectedIndex < 0) throw new ArgumentException("Select a hold and tap-hold action.");
         return new ModifierBinding { Modifier = modifier, Enabled = enabled.Checked, NextInput = KeyChord.Parse(next.Text).ToString(),
             PreviousInput = KeyChord.Parse(previous.Text).ToString(), TapOutput = KeyChord.Parse(tap.Text).ToString(),
             HoldNextOutput = KeyChord.Parse(forward.Text).ToString(), HoldPreviousOutput = KeyChord.Parse(backward.Text).ToString(),
-            TapWaitMs = (int)wait.Value, ShortPressMs = (int)shortMax.Value };
+            TapWaitMs = (int)wait.Value, ShortPressMs = (int)shortMax.Value,
+            DoubleHoldMode = Convert.ToString(doubleMode.SelectedItem), DoubleHoldOutput = KeyChord.ParseHold(doubleOutput.Text).ToString(),
+            HoldMode = Convert.ToString(holdMode.SelectedItem), HoldOutput = KeyChord.ParseHold(holdOutput.Text).ToString() };
+    }
+    internal void VerifyActions()
+    {
+        foreach (string mode in new string[] { "Original modifier", "Cycle list", "Dial scrolling", "Hold a key" })
+        {
+            holdMode.SelectedItem = mode;
+            foreach (string second in new string[] { "Cycle list", "Dial scrolling", "Hold a key" })
+            {
+                doubleMode.SelectedItem = second; doubleOutput.Text = "Ctrl"; holdOutput.Text = "Space";
+                tap.Text = "Scroll up"; forward.Text = "Scroll up"; backward.Text = "Scroll down";
+                ModifierBinding read = Read();
+                if (read.HoldMode != mode || read.DoubleHoldMode != second || read.DoubleHoldOutput != "Ctrl" || read.TapOutput != "Scroll up" || read.HoldPreviousOutput != "Scroll down")
+                    throw new Exception("Action selectors/scroll choices were not read correctly.");
+            }
+        }
     }
 }
 
