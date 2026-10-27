@@ -8,3 +8,11 @@ AltClipCtrl.settings.xml
 *.suo
 outputs/
 work/
+.venv/
+__pycache__/
+*.pyc
+*.spec
+dist/
+build/
+inbetween.settings.json
+altclipctrl.settings.json

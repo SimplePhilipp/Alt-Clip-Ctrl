@@ -1,0 +1,4 @@
+PySide6-Essentials==6.8.3
+evdev==1.9.2; sys_platform == 'linux'
+pyobjc-framework-Quartz==11.1; sys_platform == 'darwin'
+pyobjc-framework-Cocoa==11.1; sys_platform == 'darwin'

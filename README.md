@@ -1,86 +1,65 @@
 # Alt Clip Ctrl
 
-A standalone Windows helper for Clip Studio Paint with configurable modifier gestures, dial shortcuts, scrolling, and independent tool cycles. No AutoHotkey or installer is required.
+Alt Clip Ctrl 2.0 maps a programmable dial and its buttons to keyboard shortcuts, scrolling, tool cycles and application profiles. The new app was previously called Inbetween.
 
-## Start
+![Alt Clip Ctrl controller map](docs/altclipctrl-main.png)
 
-Download the Windows ZIP from [Releases](https://github.com/SimplePhilipp/Alt-Clip-Ctrl/releases/latest), extract it to a writable folder, and run AltClipCtrl.exe. Exit the previous version first. Keep AltClipCtrl.settings.xml beside the new executable to preserve saved settings. Closing the main window exits the app; minimizing keeps it running.
+## Use the app
 
-## Config
+On Windows, extract the complete `AltClipCtrl-Windows.zip` and open `AltClipCtrl/AltClipCtrl.exe`. Keep the `_internal` folder beside it. Close any older Alt Clip Ctrl or Inbetween copy first.
 
-Choose the Alt, Ctrl, or Shift tab, then select Tap, Hold, or Tap then hold on the left. Only relevant controls appear on the right.
+Give each controller signal its own key in the controller's configuration software, then use **Quick assign** to record the inputs. Click any outlined control to choose its actions. Input and output support **F1–F24**, and outputs support modifier chords.
 
-- **Tap:** press and release. Choose No action or Key / shortcut. Scrolling is no longer offered for Tap.
-- **Hold:** press and keep holding.
-- **Tap then hold:** tap, release, then press and keep holding again.
+- A clean controller map with user-defined names in hover tooltips.
+- Tap (−), Hold (_) and Tap then hold (−_) actions.
+- Held dial scrolling, dial cycling and temporary dial modifiers, with direction reversal.
+- A profile dropdown, program-linked profiles and button actions that switch profiles.
+- The three most recent actions, with input lighting and the actual called action.
+- Optional scroll acceleration with an adjustable **1×–10×** factor in **Options → Advanced**.
 
-Hold and Tap then hold offer exactly the same five choices:
+Existing Inbetween JSON settings are copied automatically on first launch. The original file stays intact, and existing Alt Clip Ctrl JSON settings take priority. The previous modifier-based Windows helper's XML settings can be imported from Options.
 
-| Action | Behavior |
-| --- | --- |
-| No action | Sends nothing for that gesture, including dial turns. |
-| Dial modifier | Holds that tab's native modifier between turns; clockwise and counterclockwise inputs send the configured outputs. |
-| Cycle list | Moves through that modifier's editable list. |
-| Dial scrolling | Sends mouse-wheel input, with direction reversal and 1-20 notches per step. |
-| Hold a key | Holds the selected key or chord until release. |
+See the [setup and usage guide](docs/AltClipCtrl.md) for default signals, gesture details and platform requirements.
 
-Dial modifier is the renamed Original modifier action. Older settings migrate automatically. Old Tap scroll assignments become No action; other settings are retained. The previously removed No modifier profile stays removed.
+## Platforms
 
-The three gestures have independent action choices. Each modifier has its own cycle list and position; its dial output pair and scroll controls are shared by gestures using those actions. You can configure disabled profiles without enabling them.
+| Platform | Input and output | Program-linked profiles |
+| --- | --- | --- |
+| Windows | Native keyboard listener and Windows keyboard/wheel output | Foreground executable and window |
+| Linux | The selected evdev controller and uinput; device access is required | X11; select profiles manually on Wayland |
+| macOS | Quartz event tap; Accessibility and Input Monitoring access are required | Foreground application |
 
-**Advanced timing** is collapsed by default. The tap/second-press window defaults to 100 ms. Maximum short press defaults to 300 ms. A custom Hold a key action starts after Maximum short press for Hold, or on the second press for Tap then hold. Dial turns act immediately.
+The UI and gesture engine are shared. Windows has packaged startup and native delivery checks; Linux and macOS adapters still require hardware validation. This is a user-space input translator, not replacement device firmware.
 
-The input keys are configured on the left. **Set** records an input key; **Record** records an output shortcut. The cycle editor supports adding, removing, and reordering entries. The sentence preview describes the selected action. Unsaved changes remain pending while you switch tabs or gestures. Save applies and persists them; Cancel discards them. Restore defaults only applies after Save.
+## Run from source
 
-## Dial setup and scrolling
+Use Python 3.10–3.13 in a virtual environment:
 
-The controller button should send the selected modifier down when pressed and up when released. Turns should send the corresponding modifier plus the configured input key (default ] clockwise and [ counterclockwise). Use the controller button that is actually assigned to that modifier.
+```text
+python -m pip install -r requirements-altclipctrl.txt
+python -m altclipctrl
+```
 
-Software-generated input is accepted. The helper ignores only its own marked output. Repeated modifier-down/bracket/modifier-up packets from controller software retain the held gesture.
+`python -m altclipctrl --preview` opens the interface without global input or output. `--settings PATH` selects a separate settings file. The old `python -m inbetween` launch command remains available for compatibility.
 
-Scrolling acts at the mouse pointer according to the target app's normal mouse-wheel handling. Hover over a scrollable panel or slider before turning. This does not automatically locate a color wheel or make unsupported controls scrollable. The first packet in a scroll gesture releases the activation modifier before the wheel event, avoiding Ctrl+wheel zoom or Shift+wheel horizontal scrolling. Subsequent turns send only wheel events, without repeated modifier keystrokes.
+Build on the destination operating system:
 
-Scroll up/down remain available as clockwise/counterclockwise outputs under Dial modifier. Direct scroll outputs send one notch; Dial scrolling uses its amount and reversal settings. Inputs remain keyboard keys. Key and shortcut text supports B, F12, Space, Ctrl+Shift+F1, Plus, Minus, and similar key names. Pure modifiers such as Ctrl or Alt can be used for Hold a key.
+```text
+python build-altclipctrl.py
+python package-altclipctrl.py
+```
 
-## Scope and tracking
+The build is written to `outputs/AltClipCtrl`. The Windows packaging command creates `outputs/AltClipCtrl-Windows.zip` and `outputs/AltClipCtrl-Source.zip`. Shared libraries, third-party notices and build instructions accompany the package; see [third-party components](docs/AltClipCtrl-Third-Party.md).
 
-The global enable switch and **Only in Clip Studio Paint** switch stay at the top. Turning detection off permits bindings in other foreground apps. The helper's own windows are excluded. Pause in the tray temporarily disables the helper.
+## Validation
 
-Default cycle order:
+```text
+python -m unittest discover -s tests -p "test_*.py"
+python -m tests.ui_smoke
+```
 
-| Shortcut | Tool | Shortcut | Tool |
-| --- | --- | --- | --- |
-| 1 | Pen | F2 | Auto select |
-| 2 | Sketch | F3 | Gradient |
-| 3 | Blend | F4 | Operation |
-| 4 | Brush | F5 | Figure |
-| 5 | Eraser | F6 | Text |
-| 6 | Airbrush | F7 | Comic |
-| 7 | Liquify | F8 | Ruler |
-| 8 | Decoration | F9 | Correct line |
-| 9 | Selection area | F10 | Move |
-| F1 | Fill | F11 | Eyedropper |
+Unit and offscreen UI tests cover gestures, profile management, dial modes, acceleration, input repeat handling, window changes, settings migration and cleanup. The opt-in Windows native tests use an isolated receiver that consumes their generated input. They measure native delivery, not physical notch-to-screen latency.
 
-Set matching shortcuts in CSP yourself and remove collisions with other CSP commands. Each list supports 1-64 unique entries. Lists wrap independently. A direct keyboard shortcut updates matching entries in all lists; generated outputs update only their originating profile.
+## Previous Windows helper
 
-CSP does not expose its current tool through a supported simple query. After selecting a tool with the mouse, press its configured shortcut to resync. The helper remembers requested selections and cannot confirm CSP accepted them. Unknown tap outputs reset that profile's tracker. No action and scrolling retain its position. The tray can forget all cycle positions.
-
-Use shortcut actions with the canvas active, outside dialogs and text editing, and between brush strokes.
-
-## Efficiency and privacy
-
-The fast gesture timer sleeps when no gesture deadline or queued interface refresh needs processing. Scrolling reuses prepared native input packets and dispatches directly from validated dial input, without waiting for the UI message queue. It does not batch, net together opposite directions, or add a smoothing timer. Tool shortcut lookup uses cached indexes. Foreground process checks are cached; focus events handle app changes with a one-second fallback. UI refreshes are coalesced about 40 ms apart. No artificial delay is added to dial steps.
-
-No network code, clipboard access, keystroke history, startup entry, registry changes, or automatic updater is included. Only settings saved through Config are persisted. Temporary input listeners are removed outside the selected scope or when paused/disabled. Held outputs are released on gesture release, focus change, applying settings, pause, disable, or exit.
-
-The executable is unsigned. Keep CSP and the helper at normal privileges; Windows may block input sent to a more privileged app.
-
-## Source and validation
-
-The public source is [SimplePhilipp/Alt-Clip-Ctrl](https://github.com/SimplePhilipp/Alt-Clip-Ctrl). Build with build.ps1 using Microsoft's existing .NET Framework compiler. The executable is written to bin/AltClipCtrl.exe.
-
-Run test.ps1 for gesture/output/config tests, or test.ps1 -Smoke for UI and cleanup checks. Diagnostic tests emit no real keyboard or scroll input. Coverage includes all gesture modes, identical hold choices, tap scrolling exclusion, idle timer demand, 60,000 scroll-session turns with rapid reversals, 12,000 immediate-dispatch/overlapping-notch checks, 3,000 wrapped ordinary turns, modifier-free wheel packets, session release/focus reset, independent cycles, migration, and held-output cleanup. UI previews were visually checked. No hardware latency or CPU percentage is claimed.
-
-## Config preview
-
-![Alt Clip Ctrl configuration](docs/config.png)
+The original modifier-based helper is retained in `src/`, with `build.ps1` and `test.ps1`. Its [documentation](docs/Legacy-Windows.md) and [v1.4.1 release](https://github.com/SimplePhilipp/Alt-Clip-Ctrl/releases/tag/v1.4.1) remain available. Close it before using the new app.

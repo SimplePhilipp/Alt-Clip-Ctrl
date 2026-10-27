@@ -1,0 +1,1 @@
+"""AltClipCtrl automated verification."""
