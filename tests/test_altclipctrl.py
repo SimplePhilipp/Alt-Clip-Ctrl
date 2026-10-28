@@ -88,7 +88,7 @@ class ModelTests(unittest.TestCase):
         result, notes = import_legacy(Path(__file__).resolve().parents[1] / "AltClipCtrl.settings.example.xml", original)
         self.assertEqual(len(original["profiles"]), 1)
         self.assertEqual(len(result["profiles"]), 4)
-        self.assertEqual(len(result["profiles"][1]["cycle"]), 20)
+        self.assertEqual(len(result["profiles"][1]["cycle_lists"][0]["items"]), 20)
         self.assertTrue(notes)
         validate(result)
         self.assertEqual(result["profiles"][1]["bindings"]["neutral"]["input"], "F22")
@@ -179,15 +179,15 @@ class GestureTests(unittest.TestCase):
         self.bindings["top_right"]["tap"] = action("profile", other["id"])
         self.engine.execute(action("cycle_next"))
         self.engine.execute(action("cycle_next"))
-        self.assertEqual(self.engine.positions[self.engine.profile_id], 1)
+        self.assertEqual(self.engine.positions[(self.engine.profile_id, "default")], 1)
         self.tap("F15")
         self.engine.poll(1.121)
         self.assertEqual(self.engine.profile_id, other["id"])
         self.engine.execute(action("cycle_previous"))
-        self.assertEqual(self.engine.positions[other["id"]], 1)
+        self.assertEqual(self.engine.positions[(other["id"], "default")], 1)
         self.engine.switch(self.settings["profiles"][0]["id"])
         self.engine.execute(action("cycle_next"))
-        self.assertEqual(self.engine.positions[self.engine.profile_id], 0)
+        self.assertEqual(self.engine.positions[(self.engine.profile_id, "default")], 0)
 
     def test_rapid_reversals_do_not_coalesce(self):
         self.bindings["cw"]["tap"] = action("scroll_up")
@@ -222,7 +222,7 @@ class GestureTests(unittest.TestCase):
 
     def test_direct_shortcut_tracking_and_foreign_signal(self):
         self.engine.track("E")
-        self.assertEqual(self.engine.positions[self.engine.profile_id], 1)
+        self.assertEqual(self.engine.positions[(self.engine.profile_id, "default")], 1)
         self.engine.event("Alt", True, 1)
         self.engine.event("F1", True, 1)
         self.engine.poll(10)

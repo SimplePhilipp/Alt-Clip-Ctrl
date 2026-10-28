@@ -19,7 +19,7 @@ from .engine import Engine
 from . import __version__
 from .live import LiveInput
 from .assignment import QuickAssignment
-from .model import ACTIONS, DIAL_MODES, DIAL_SLOTS, GESTURES, GESTURE_NAMES, KEYS, MODIFIERS, ROTATIONS, SLOTS, allowed_actions, defaults, dial_map, import_legacy, load, new_profile, normalize, references_profile, save, validate, validate_output
+from .model import ACTIONS, DIAL_MODES, DIAL_SLOTS, GESTURES, GESTURE_NAMES, KEYS, MODIFIERS, ROTATIONS, SLOTS, allowed_actions, defaults, dial_map, import_legacy, load, new_cycle_list, new_profile, normalize, references_cycle, references_profile, save, validate, validate_output
 from .platforms import PreviewBackend, WindowsBackend, create_backend
 
 STYLE = """
@@ -162,9 +162,10 @@ class KeyEditor(QWidget):
 
 
 class ActionEditor(QWidget):
-    def __init__(self, output, profiles, allow_hold, default_dial=None):
+    def __init__(self, output, profiles, allow_hold, default_dial=None, active_profile=None):
         super().__init__()
         self.profiles = profiles
+        self.cycle_profile = active_profile or profiles[0]
         self.dial_mapping = copy.deepcopy(output["value"] if output["kind"] == "dial_modifier" else default_dial or dial_map())
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -180,6 +181,16 @@ class ActionEditor(QWidget):
         if output["kind"] == "profile":
             self.profile.setCurrentIndex(self.profile.findData(output["value"]))
         layout.addWidget(self.profile)
+        self.cycle_picker = QWidget()
+        cycle_form = QFormLayout(self.cycle_picker)
+        cycle_form.setContentsMargins(0, 0, 0, 0)
+        self.cycle = QComboBox()
+        for cycle in self.cycle_profile["cycle_lists"]:
+            self.cycle.addItem(cycle["name"], cycle["id"])
+        if output["kind"] in ("cycle_next", "cycle_previous", "dial_cycle") and isinstance(output["value"], dict) and "cycle_id" in output["value"]:
+            self.cycle.setCurrentIndex(self.cycle.findData(output["value"]["cycle_id"]))
+        cycle_form.addRow("Cycle list", self.cycle)
+        layout.addWidget(self.cycle_picker)
         self.dial_button = button("Configure temporary dial controls…", self.edit_dial)
         layout.addWidget(self.dial_button)
         self.reverse_direction = QCheckBox("Reverse direction")
@@ -195,35 +206,42 @@ class ActionEditor(QWidget):
         kind = self.kind.currentData()
         self.key.setVisible(kind in ("shortcut", "hold_key"))
         self.profile.setVisible(kind == "profile")
+        self.cycle_picker.setVisible(kind in ("cycle_next", "cycle_previous", "dial_cycle"))
         self.dial_button.setVisible(kind == "dial_modifier")
         self.reverse_direction.setVisible(kind in ("dial_scroll", "dial_cycle"))
         self.hint.setText({"none": "This gesture sends nothing.", "shortcut": "Send a key or chord once. Example: Ctrl+Shift+F24.",
             "hold_key": "Keep the key or chord down until you release this button.",
-            "cycle_next": "Move forward through this profile's cycle list in Options.",
-            "cycle_previous": "Move backward through this profile's cycle list in Options.",
+            "cycle_next": "Move forward through the selected cycle list. Manage lists in Options.",
+            "cycle_previous": "Move backward through the selected cycle list. Manage lists in Options.",
             "scroll_up": "Scroll at the mouse pointer. Amount and reversal are in Options.",
             "scroll_down": "Scroll at the mouse pointer. Amount and reversal are in Options.",
             "dial_scroll": "While held: clockwise scrolls up and counterclockwise scrolls down, including pressed turns. Amount and reversal are in Options.",
-            "dial_cycle": "While held: clockwise moves forward and counterclockwise moves backward through this profile's cycle list.",
+            "dial_cycle": "While held: clockwise moves forward and counterclockwise moves backward through the selected cycle list.",
             "dial_modifier": "Choose temporary outputs for all five dial controls. Release this button to restore the normal dial actions.",
             "profile": "Activate this profile and release any held output."}.get(kind, ""))
 
     def read(self):
         kind = self.kind.currentData()
+        if kind in ("cycle_next", "cycle_previous", "dial_cycle"):
+            value = {"cycle_id": self.cycle.currentData()}
+            if kind == "dial_cycle":
+                value["reverse"] = self.reverse_direction.isChecked()
+            return {"kind": kind, "value": value}
         return {"kind": kind, "value": self.key.text() if kind in ("shortcut", "hold_key") else
                 self.profile.currentData() if kind == "profile" else copy.deepcopy(self.dial_mapping) if kind == "dial_modifier" else
-                {"reverse": self.reverse_direction.isChecked()} if kind in ("dial_scroll", "dial_cycle") else ""}
+                {"reverse": self.reverse_direction.isChecked()} if kind == "dial_scroll" else ""}
 
     def edit_dial(self):
-        dialog = TemporaryDialDialog(self, self.dial_mapping, self.profiles)
+        dialog = TemporaryDialDialog(self, self.dial_mapping, self.profiles, self.cycle_profile)
         if dialog.exec():
             self.dial_mapping = dialog.result_mapping
 
 
 class TemporaryDialDialog(QDialog):
-    def __init__(self, parent, mapping, profiles):
+    def __init__(self, parent, mapping, profiles, active_profile=None):
         super().__init__(parent)
         self.profiles = profiles
+        self.cycle_profile = active_profile or profiles[0]
         self.setWindowTitle("Dial modifier · Temporary controls")
         self.resize(700, 730)
         layout = QVBoxLayout(self)
@@ -238,7 +256,7 @@ class TemporaryDialDialog(QDialog):
         self.editors = {}
         for slot in DIAL_SLOTS:
             rows.addWidget(label(dict(SLOTS)[slot], "section"))
-            editor = ActionEditor(mapping[slot], profiles, False)
+            editor = ActionEditor(mapping[slot], profiles, False, active_profile=self.cycle_profile)
             self.editors[slot] = editor
             rows.addWidget(editor)
             rows.addWidget(line())
@@ -254,7 +272,7 @@ class TemporaryDialDialog(QDialog):
         mapping = {slot: editor.read() for slot, editor in self.editors.items()}
         try:
             for output in mapping.values():
-                validate_output(output, {p["id"] for p in self.profiles})
+                validate_output(output, {p["id"] for p in self.profiles}, cycles=self.cycle_profile["cycle_lists"])
             self.result_mapping = mapping
             self.accept()
         except Exception as exc:
@@ -288,7 +306,7 @@ class BindingDialog(QDialog):
         self.editors = {}
         if slot in ROTATIONS:
             layout.addWidget(label("On each turn", "section"))
-            self.editors["tap"] = ActionEditor(binding["tap"], settings["profiles"], False)
+            self.editors["tap"] = ActionEditor(binding["tap"], settings["profiles"], False, active_profile=self.profile)
             layout.addWidget(self.editors["tap"])
         else:
             tabs = QTabWidget()
@@ -299,7 +317,7 @@ class BindingDialog(QDialog):
                 help_text = {"tap": "Press and release once.", "hold": "Press and keep holding.",
                              "tap_hold": "Tap, release, then press and keep holding."}[gesture]
                 page_layout.addWidget(label(help_text, "muted"))
-                self.editors[gesture] = ActionEditor(binding[gesture], settings["profiles"], gesture != "tap", dial_map(self.profile))
+                self.editors[gesture] = ActionEditor(binding[gesture], settings["profiles"], gesture != "tap", dial_map(self.profile), self.profile)
                 page_layout.addWidget(self.editors[gesture])
                 page_layout.addStretch()
                 tabs.addTab(page, GESTURE_NAMES[gesture])
@@ -462,6 +480,7 @@ class OptionsDialog(QDialog):
         self.current = settings["active_profile"]
         self.foreground = foreground
         self.loading = False
+        self.current_cycle = None
         self.setWindowTitle("Alt Clip Ctrl · Options")
         self.resize(800, 680)
         layout = QVBoxLayout(self)
@@ -506,8 +525,18 @@ class OptionsDialog(QDialog):
         cycles = QWidget()
         c = QVBoxLayout(cycles)
         c.setContentsMargins(20, 20, 20, 20)
-        c.addWidget(label("Cycle list", "section"))
-        c.addWidget(label("This list belongs to the profile selected in Profiles & programs. Assign Cycle list · next or previous to a button or dial movement.", "muted", True))
+        c.addWidget(label("Cycle lists", "section"))
+        c.addWidget(label("Create named lists for the profile selected in Profiles & programs. Choose a list in each button's cycling action.", "muted", True))
+        self.cycle_selector = QComboBox()
+        c.addWidget(self.cycle_selector)
+        list_buttons = QHBoxLayout()
+        for text, callback in (("New list", self.add_cycle_list), ("Duplicate list", self.duplicate_cycle_list), ("Delete list", self.delete_cycle_list)):
+            list_buttons.addWidget(button(text, callback))
+        c.addLayout(list_buttons)
+        cycle_form = QFormLayout()
+        self.cycle_name = QLineEdit()
+        cycle_form.addRow("List name", self.cycle_name)
+        c.addLayout(cycle_form)
         self.cycle = QTableWidget(0, 2)
         self.cycle.setHorizontalHeaderLabels(["Tool / action name", "Shortcut"])
         self.cycle.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -607,6 +636,7 @@ class OptionsDialog(QDialog):
         layout.addWidget(footer)
         self.load_profile()
         self.selector.currentIndexChanged.connect(self.change_profile)
+        self.cycle_selector.currentIndexChanged.connect(self.change_cycle_list)
 
     def profile(self):
         return next(p for p in self.result_settings["profiles"] if p["id"] == self.current)
@@ -623,7 +653,7 @@ class OptionsDialog(QDialog):
         profile = self.profile()
         profile["name"] = self.profile_name.text().strip()
         profile["programs"] = [s.strip() for s in self.programs.toPlainText().splitlines() if s.strip()]
-        profile["cycle"] = [{"name": self.cell(i, 0), "shortcut": self.cell(i, 1)} for i in range(self.cycle.rowCount())]
+        self.store_cycle_list()
 
     def cell(self, row, column):
         item = self.cycle.item(row, column)
@@ -633,9 +663,77 @@ class OptionsDialog(QDialog):
         profile = self.profile()
         self.profile_name.setText(profile["name"])
         self.programs.setPlainText("\n".join(profile["programs"]))
+        self.current_cycle = profile["cycle_lists"][0]["id"]
+        self.fill_cycle_lists()
+        self.load_cycle_list()
+
+    def selected_cycle_list(self):
+        return next(c for c in self.profile()["cycle_lists"] if c["id"] == self.current_cycle)
+
+    def store_cycle_list(self):
+        if self.current_cycle is None:
+            return
+        cycle = self.selected_cycle_list()
+        cycle["name"] = self.cycle_name.text().strip()
+        cycle["items"] = [{"name": self.cell(i, 0), "shortcut": self.cell(i, 1)} for i in range(self.cycle.rowCount())]
+        self.cycle_selector.setItemText(self.cycle_selector.findData(self.current_cycle), cycle["name"])
+
+    def fill_cycle_lists(self):
+        self.cycle_selector.blockSignals(True)
+        self.cycle_selector.clear()
+        for cycle in self.profile()["cycle_lists"]:
+            self.cycle_selector.addItem(cycle["name"], cycle["id"])
+        self.cycle_selector.setCurrentIndex(self.cycle_selector.findData(self.current_cycle))
+        self.cycle_selector.blockSignals(False)
+
+    def load_cycle_list(self):
+        cycle = self.selected_cycle_list()
+        self.cycle_name.setText(cycle["name"])
         self.cycle.setRowCount(0)
-        for item in profile["cycle"]:
+        for item in cycle["items"]:
             self.add_cycle(item=item)
+
+    def change_cycle_list(self):
+        selected = self.cycle_selector.currentData()
+        if selected is None or selected == self.current_cycle:
+            return
+        self.store_cycle_list()
+        self.current_cycle = selected
+        self.load_cycle_list()
+
+    def append_cycle_list(self, cycle):
+        if len(self.profile()["cycle_lists"]) >= 64:
+            return error(self, "Keep at most 64 cycle lists per profile.")
+        existing = {c["name"].casefold() for c in self.profile()["cycle_lists"]}
+        name, suffix = cycle["name"], 2
+        while cycle["name"].casefold() in existing:
+            cycle["name"], suffix = f"{name} {suffix}", suffix + 1
+        self.profile()["cycle_lists"].append(cycle)
+        self.current_cycle = cycle["id"]
+        self.fill_cycle_lists()
+        self.load_cycle_list()
+
+    def add_cycle_list(self):
+        self.store_profile()
+        self.append_cycle_list(new_cycle_list("New list", [{"name": "New action", "shortcut": "F1"}]))
+
+    def duplicate_cycle_list(self):
+        self.store_profile()
+        original = self.selected_cycle_list()
+        self.append_cycle_list(new_cycle_list(original["name"] + " copy", original["items"]))
+
+    def delete_cycle_list(self):
+        self.store_profile()
+        cycles = self.profile()["cycle_lists"]
+        if len(cycles) == 1:
+            return error(self, "Keep at least one cycle list in each profile.")
+        for binding in self.profile()["bindings"].values():
+            if any(references_cycle(binding[g], self.current_cycle, cycles[0]["id"]) for g in GESTURES):
+                return error(self, "‘" + binding["name"] + "’ uses this cycle list. Choose another list in that button's action first.")
+        cycles.remove(self.selected_cycle_list())
+        self.current_cycle = cycles[0]["id"]
+        self.fill_cycle_lists()
+        self.load_cycle_list()
 
     def change_profile(self):
         if self.selector.currentData() is None:

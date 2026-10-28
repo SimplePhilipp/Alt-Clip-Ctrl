@@ -45,7 +45,7 @@ The seven outer buttons and pressed-neutral signal support three independent ges
 **Tap (−)** offers No action, Key / shortcut, Cycle list next/previous, Scroll up/down and Switch profile. **Hold (_) and Tap then hold (−_)** offer No action, Hold a key, Dial scrolling, Dial cycling, Dial modifier and Switch profile. The held menus have no directional scroll/cycle actions or Key / shortcut.
 
 - **Dial scrolling:** while the button is held, clockwise turns scroll up and counterclockwise turns scroll down. Pressed turns follow the same direction rule. Each assignment has its own **Reverse direction** checkbox. Global scroll amount and reversal in Options also apply.
-- **Dial cycling:** while held, clockwise advances and counterclockwise goes backward through the current profile's cycle list. Each assignment has its own **Reverse direction** checkbox, independent of the scrolling assignments.
+- **Dial cycling:** choose a named cycle list for this action. While held, clockwise advances and counterclockwise goes backward through that list. Each assignment has its own **Reverse direction** checkbox, independent of the scrolling assignments. Different held buttons can use different lists, and each list remembers its own position.
 - **Dial modifier:** choose **Configure temporary dial controls…** to assign temporary outputs for all five dial signals. The physical input keys stay the same. A dial press runs its temporary action once on release; turning while pressed cancels that press action. The chosen held button's release restores the normal dial outputs. No Alt/Ctrl/Shift input interpretation is involved.
 
 These are temporary modes, not one-off actions fired when holding starts. A first dial movement can activate a held dial mode before the hold timer expires; Tap then hold activates its mode on the second press. If two mode buttons overlap, the most recently activated mode takes priority. Releasing it resumes the other still-held mode; releasing the final mode button restores the base mappings. Focus changes, profile switches, pause, settings changes and exit also clear temporary modes.
@@ -62,7 +62,11 @@ The profile selector is at the top left. **Options → Profiles & programs** cre
 
 Assign **Switch profile** in a button editor to select a destination profile for that gesture. A referenced profile cannot be deleted until its incoming button actions are changed.
 
-**Actions & cycles** edits the cycle list for the profile selected in Profiles & programs. Lists contain 1–64 named shortcuts, support reordering and wrap independently. Matching direct keyboard shortcuts resynchronise positions. Mouse tool selection cannot be detected. **Advanced** contains tap/second-press timing, hold timing, scroll amount (1–20), direction reversal, optional scroll acceleration, and a legacy Windows XML importer. Each profile has its own list; timing and scroll options currently apply globally.
+**Actions & cycles** manages up to 64 named cycle lists for the profile selected in Profiles & programs. Select a list from the dropdown, change its **List name**, or use **New list**, **Duplicate list** and **Delete list**. Each list contains 1–64 named shortcuts, supports reordering and wraps independently. Pending edits are retained when switching lists or profiles; Save applies them and Cancel discards them. A list used by a button or temporary dial mapping cannot be deleted until that action selects another list. Keep at least one list per profile.
+
+In a button's action editor, **Cycle list · next**, **Cycle list · previous**, and **Dial cycling** each show a **Cycle list** dropdown. This also works for next/previous outputs inside Dial modifier. Renaming a list keeps its button assignments. Each profile/list pair remembers its own position; switching profiles or held dial modes preserves that position. Matching direct keyboard shortcuts resynchronise every list containing that shortcut. Mouse tool selection cannot be detected.
+
+Existing single-list settings automatically migrate to a list named **Default**, preserving entries and cycle actions. Settings use format version 2 starting with Alt Clip Ctrl 2.1. **Advanced** contains tap/second-press timing, hold timing, scroll amount (1–20), direction reversal, optional scroll acceleration, and a legacy Windows XML importer. Timing and scroll options apply globally.
 
 **Scroll acceleration** is off by default, including for existing settings. Enable its checkbox in **Options → Advanced**, then set **Acceleration factor** from **1× to 10×** (default **3×**). Slow dial turns keep the configured notches per step. For turns less than 120 ms apart in the same direction, the multiplier increases with speed toward the selected factor. The first turn, a pause, a reversal, a new dial mode, focus/profile changes and reset start at the normal amount. Each turn sends one immediate wheel event, rounded to whole notches; there is no momentum or delayed output after stopping. This applies to ordinary dial scroll assignments, held Dial scrolling and scroll outputs inside Dial modifier. Single button taps and cycling retain their normal behavior. History displays the actual distance sent.
 
@@ -146,3 +150,5 @@ Physical dial latency, monitor presentation and subjective scrolling feel requir
 ![Main controller map](altclipctrl-main.png)
 ![Button editor](altclipctrl-button.png)
 ![Options](altclipctrl-options.png)
+![Named cycle lists](altclipctrl-cycle-lists.png)
+![Choose a list for dial cycling](altclipctrl-dial-cycling.png)

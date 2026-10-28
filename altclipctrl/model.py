@@ -79,7 +79,29 @@ def references_profile(output, profile_id):
         output["kind"] == "dial_modifier" and any(references_profile(item, profile_id) for item in output["value"].values()))
 
 
-def validate_output(output, ids, *, held=False):
+def cycle_id(profile, output):
+    value = output["value"]
+    return value.get("cycle_id", profile["cycle_lists"][0]["id"]) if isinstance(value, dict) else profile["cycle_lists"][0]["id"]
+
+
+def cycle_list(profile, output):
+    selected = cycle_id(profile, output)
+    return next(c for c in profile["cycle_lists"] if c["id"] == selected)
+
+
+def references_cycle(output, selected, default_id):
+    if output["kind"] in ("cycle_next", "cycle_previous", "dial_cycle"):
+        value = output["value"]
+        return (value.get("cycle_id", default_id) if isinstance(value, dict) else default_id) == selected
+    return output["kind"] == "dial_modifier" and any(references_cycle(item, selected, default_id) for item in output["value"].values())
+
+
+def new_cycle_list(name="New list", items=None):
+    return {"id": uuid.uuid4().hex, "name": name,
+            "items": copy.deepcopy(items) if items is not None else [{"name": "Pen", "shortcut": "B"}, {"name": "Eraser", "shortcut": "E"}]}
+
+
+def validate_output(output, ids, *, held=False, cycles=None):
     kind, value = output["kind"], output["value"]
     if kind not in allowed_actions(held):
         raise ValueError("Choose a dial mode or Hold a key for held gestures; directional actions and Key / shortcut belong to Tap.")
@@ -92,11 +114,21 @@ def validate_output(output, ids, *, held=False):
             output["value"] = {"reverse": False}
         elif not isinstance(value, dict) or type(value.get("reverse")) is not bool:
             raise ValueError("Choose a valid direction for the dial action.")
+    if kind in ("cycle_next", "cycle_previous", "dial_cycle"):
+        value = output["value"]
+        if value == "":
+            value = output["value"] = {}
+        if not isinstance(value, dict):
+            raise ValueError("Choose a valid cycle list.")
+        if cycles:
+            value.setdefault("cycle_id", cycles[0]["id"])
+            if type(value["cycle_id"]) is not str or value["cycle_id"] not in {c["id"] for c in cycles}:
+                raise ValueError("Choose an existing cycle list in this profile.")
     if kind == "dial_modifier":
         if not isinstance(value, dict) or set(value) != set(DIAL_SLOTS):
             raise ValueError("Set all five temporary dial controls.")
         for temporary in value.values():
-            validate_output(temporary, ids)
+            validate_output(temporary, ids, cycles=cycles)
 
 
 def new_profile(name="Default"):
@@ -104,20 +136,27 @@ def new_profile(name="Default"):
     for i, (slot, label) in enumerate(SLOTS):
         bindings[slot] = {"name": label, "input": f"F{13 + i}",
                           "tap": action(), "hold": action(), "tap_hold": action()}
+    cycle = new_cycle_list("Default")
+    cycle["id"] = "default"
     return {"id": uuid.uuid4().hex, "name": name, "programs": [], "bindings": bindings,
-            "cycle": [{"name": "Pen", "shortcut": "B"}, {"name": "Eraser", "shortcut": "E"}]}
+            "cycle_lists": [cycle]}
 
 
 def defaults():
     profile = new_profile()
-    return {"version": 1, "active_profile": profile["id"], "enabled": True,
+    return {"version": 2, "active_profile": profile["id"], "enabled": True,
             "auto_switch": True, "tap_ms": 100, "hold_ms": 300, "scroll_amount": 1,
             "reverse_scroll": False, "scroll_acceleration": False,
             "scroll_acceleration_factor": 3.0, "linux_device": "", "profiles": [profile]}
 
 
 def validate(settings):
-    if settings.get("version") != 1:
+    if settings.get("version") == 1:
+        for profile in settings["profiles"]:
+            if "cycle_lists" not in profile:
+                profile["cycle_lists"] = [{"id": "default", "name": "Default", "items": profile.pop("cycle")}]
+        settings["version"] = 2
+    if settings.get("version") != 2:
         raise ValueError("This settings version is not supported.")
     profiles = settings["profiles"]
     if not 1 <= len(profiles) <= 64:
@@ -132,6 +171,25 @@ def validate(settings):
             raise ValueError("Give each profile a unique, nonempty name.")
         profile["name"] = name
         names.add(name.casefold())
+        cycles = profile["cycle_lists"]
+        if not 1 <= len(cycles) <= 64:
+            raise ValueError("Each profile needs between 1 and 64 cycle lists.")
+        cycle_ids, cycle_names = set(), set()
+        for cycle in cycles:
+            cycle_name = cycle["name"].strip()
+            if type(cycle["id"]) is not str or not cycle["id"] or cycle["id"] in cycle_ids or not cycle_name or cycle_name.casefold() in cycle_names:
+                raise ValueError("Give cycle lists unique IDs and nonempty, different names within each profile.")
+            cycle["name"] = cycle_name
+            cycle_ids.add(cycle["id"])
+            cycle_names.add(cycle_name.casefold())
+            if not 1 <= len(cycle["items"]) <= 64:
+                raise ValueError("A cycle list needs between 1 and 64 entries.")
+            shortcuts = set()
+            for item in cycle["items"]:
+                item["shortcut"] = normalize(item["shortcut"])
+                if not item["name"].strip() or item["shortcut"] in shortcuts:
+                    raise ValueError("Cycle entries need names and different shortcuts within each list.")
+                shortcuts.add(item["shortcut"])
         for program in profile["programs"]:
             if not program.strip() or program.strip().casefold() in programs:
                 raise ValueError("Each program can be linked to only one profile.")
@@ -151,16 +209,7 @@ def validate(settings):
             binding["input"] = signal
             for gesture in GESTURES:
                 output = binding[gesture]
-                validate_output(output, ids, held=gesture != "tap" and slot not in ROTATIONS)
-        cycle = profile["cycle"]
-        if not 1 <= len(cycle) <= 64:
-            raise ValueError("A cycle list needs between 1 and 64 entries.")
-        shortcuts = set()
-        for item in cycle:
-            item["shortcut"] = normalize(item["shortcut"])
-            if not item["name"].strip() or item["shortcut"] in shortcuts:
-                raise ValueError("Cycle entries need names and different shortcuts.")
-            shortcuts.add(item["shortcut"])
+                validate_output(output, ids, held=gesture != "tap" and slot not in ROTATIONS, cycles=cycles)
     for field in ("tap_ms", "hold_ms"):
         if type(settings[field]) is not int or not 20 <= settings[field] <= 2000:
             raise ValueError("Gesture timings must be between 20 and 2000 ms.")
@@ -226,7 +275,7 @@ def import_legacy(path, settings):
         profile = new_profile(name)
         tools = old.findall("./Tools/ToolBinding") or root.findall("./Tools/ToolBinding")
         if tools:
-            profile["cycle"] = [{"name": t.findtext("Name", "Tool"),
+            profile["cycle_lists"][0]["items"] = [{"name": t.findtext("Name", "Tool"),
                                   "shortcut": t.findtext("Shortcut", "B")} for t in tools]
         def convert(value):
             if value in ("Scroll up", "WheelUp"):

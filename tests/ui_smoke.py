@@ -104,6 +104,16 @@ def main():
         assert options.cycle.item(1, 0).text() == "Custom pen"
         options.move_cycle(-1)
         options.grab().save(str(out / "altclipctrl-options.png"))
+        options.cycle_name.setText("Tools")
+        options.add_cycle_list()
+        options.cycle_name.setText("Brushes")
+        options.cycle.item(0, 0).setText("Pencil")
+        options.cycle.item(0, 1).setText("P")
+        options.cycle_selector.setCurrentIndex(0)
+        assert options.cycle_name.text() == "Tools"
+        tabs.setCurrentIndex(1)
+        app.processEvents()
+        options.grab().save(str(out / "altclipctrl-cycle-lists.png"))
         options.commit()
         assert options.result() == QDialog.DialogCode.Accepted
         assert options.result_settings["profiles"][1]["programs"] == ["CLIPStudioPaint.exe"]
@@ -195,7 +205,11 @@ def main():
         app.processEvents()
         held_dialog.grab().save(str(out / "altclipctrl-dial-scrolling.png"))
         held_editor.kind.setCurrentIndex(held_editor.kind.findData("dial_cycle"))
-        assert held_editor.read() == action("dial_cycle", {"reverse": True})
+        held_editor.cycle.setCurrentIndex(1)
+        selected_cycle = window.active_profile()["cycle_lists"][1]["id"]
+        assert held_editor.read() == action("dial_cycle", {"reverse": True, "cycle_id": selected_cycle})
+        app.processEvents()
+        held_dialog.grab().save(str(out / "altclipctrl-dial-cycling.png"))
         assert not held_dialog.editors["tap_hold"].reverse_direction.isChecked()
         held_editor.kind.setCurrentIndex(held_editor.kind.findData("dial_modifier"))
         temporary = TemporaryDialDialog(held_dialog, held_editor.dial_mapping, window.config["profiles"])

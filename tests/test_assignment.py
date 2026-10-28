@@ -151,7 +151,7 @@ class GestureMenuAndHistoryTests(unittest.TestCase):
         engine.event("F23", True, 1)
         self.assertEqual(events[0]["name"], "My wheel")
         self.assertEqual(events[0]["gesture"], "Turn")
-        self.assertEqual(events[0]["action"], "Cycle → Pen · B")
+        self.assertEqual(events[0]["action"], "Cycle → Pen · B · Default")
         self.assertEqual(backend.events, [("down", "B"), ("up", "B")])
 
     def test_preview_runs_gestures_without_calling_real_backend(self):

@@ -189,7 +189,10 @@ class DialModeSettingsTests(unittest.TestCase):
                 path = Path(directory) / "settings.json"
                 path.write_text(json.dumps(settings))
                 result = load(path)
-            self.assertEqual(result["profiles"][0]["bindings"]["top_left"]["hold"], action(new, {"reverse": reverse}))
+            value = {"reverse": reverse}
+            if new == "dial_cycle":
+                value["cycle_id"] = "default"
+            self.assertEqual(result["profiles"][0]["bindings"]["top_left"]["hold"], action(new, value))
 
     def test_dial_modes_cannot_recurse_or_be_used_on_tap(self):
         for kind in ("dial_scroll", "dial_cycle", "dial_modifier"):

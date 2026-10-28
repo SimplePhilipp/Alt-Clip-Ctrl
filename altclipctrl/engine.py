@@ -4,7 +4,7 @@ All times are monotonic seconds supplied by the caller. Repeats never become
 second presses. Own output is excluded by the platform adapter, not timing guesses.
 """
 from dataclasses import dataclass
-from .model import ACTIONS, DIAL_MODES, GESTURE_NAMES, ROTATIONS, action, chord
+from .model import ACTIONS, DIAL_MODES, GESTURE_NAMES, ROTATIONS, action, chord, cycle_id, cycle_list
 
 
 @dataclass
@@ -184,7 +184,8 @@ class Engine:
         reverse = isinstance(mode["value"], dict) and mode["value"].get("reverse", False)
         forward = clockwise != reverse
         return action(("scroll_up" if forward else "scroll_down") if mode["kind"] == "dial_scroll" else
-                      ("cycle_next" if forward else "cycle_previous"))
+                      ("cycle_next" if forward else "cycle_previous"),
+                      {"cycle_id": cycle_id(self.profile, mode)} if mode["kind"] == "dial_cycle" else "")
 
     def scroll_notches(self, now, direction):
         """Increase distance from the latest turn interval, with no queued ramp.
@@ -222,11 +223,13 @@ class Engine:
                 acquired.append(key)
                 state.output = tuple(acquired)
         elif kind.startswith("cycle_"):
-            tools = self.profile["cycle"]
+            cycle = cycle_list(self.profile, output)
+            tools = cycle["items"]
+            position_key = (self.profile_id, cycle["id"])
             direction = 1 if kind == "cycle_next" else -1
-            position = self.positions.get(self.profile_id)
+            position = self.positions.get(position_key)
             position = (0 if direction > 0 else len(tools) - 1) if position is None else (position + direction) % len(tools)
-            self.positions[self.profile_id] = position
+            self.positions[position_key] = position
             self.backend.shortcut(chord(tools[position]["shortcut"]), set(self.held_counts))
         elif kind.startswith("scroll_"):
             direction = 1 if kind == "scroll_up" else -1
@@ -257,6 +260,8 @@ class Engine:
         if kind in DIAL_MODES:
             reverse = isinstance(value, dict) and value.get("reverse", False)
             detail += (" · reversed" if reverse else "") + " · while held"
+            if kind == "dial_cycle":
+                detail += " · " + cycle_list(profile, output)["name"]
         elif kind in ("shortcut", "hold_key"):
             detail = ("Hold " if kind == "hold_key" else "Send ") + value
         elif kind.startswith("scroll_"):
@@ -267,8 +272,9 @@ class Engine:
             detail = "Switch profile → " + target["name"]
         switched = self.execute(output, state, scroll_notches=amount)
         if kind.startswith("cycle_"):
-            item = profile["cycle"][self.positions[profile["id"]]]
-            detail = f"Cycle → {item['name']} · {item['shortcut']}"
+            cycle = cycle_list(profile, output)
+            item = cycle["items"][self.positions[(profile["id"], cycle["id"])]]
+            detail = f"Cycle → {item['name']} · {item['shortcut']} · {cycle['name']}"
         if via:
             detail += " · via " + via
         self.activity({"slot": slot, "name": binding["name"], "input": binding["input"],
@@ -279,9 +285,10 @@ class Engine:
     def track(self, signal):
         # Physical direct shortcuts resynchronise independent profile positions.
         for profile in self.settings["profiles"]:
-            for i, tool in enumerate(profile["cycle"]):
-                if tool["shortcut"] == signal:
-                    self.positions[profile["id"]] = i
+            for cycle in profile["cycle_lists"]:
+                for i, tool in enumerate(cycle["items"]):
+                    if tool["shortcut"] == signal:
+                        self.positions[(profile["id"], cycle["id"])] = i
 
     def physical_release(self, key):
         # A real key-up must not end an output the controller is still holding.
