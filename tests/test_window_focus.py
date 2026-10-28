@@ -14,6 +14,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from altclipctrl.engine import Engine
+from altclipctrl.live import LiveInput
 from altclipctrl.model import action
 from altclipctrl.ui import MainWindow
 from tests.test_altclipctrl import FakeBackend, TEMP_ROOT
@@ -118,6 +119,47 @@ class WindowFocusTests(unittest.TestCase):
         self.window.refresh_scope()
         self.assertFalse(self.window.config["enabled"])
         self.assertIn("target vanished", self.window.status.text())
+
+    def attach_live_view(self):
+        self.window.live = LiveInput(self.window.config, self.backend, self.fail)
+        self.window.engine = self.window.live.engine
+
+    def test_live_refresh_does_not_clear_a_held_preview_button(self):
+        self.attach_live_view()
+        self.assertTrue(self.window.preview_input)
+        widget = self.window.map.buttons["top_left"]
+        self.window.input_event("F13", True, 1, self.window.generation, True)
+        for index in range(15):
+            # Expiring a flash and refreshing background input must not unset
+            # the preview press. Controller repeats must stay a single hold.
+            self.window.map.unpulse(widget)
+            self.window.drain_live_view()
+            self.assertTrue(widget.input_held)
+            self.window.input_event("F13", True, 1.1 + index * .06, self.window.generation, True)
+        self.window.input_event("F13", False, 2.2, self.window.generation, True)
+        self.window.map.unpulse(widget)
+        self.window.drain_live_view()
+        self.assertFalse(widget.input_held)
+        self.assertEqual(self.backend.events, [])
+
+    def test_old_live_press_does_not_relight_a_released_preview_button(self):
+        self.attach_live_view()
+        self.window.live.lights["F13"] = (True, 1)
+        widget = self.window.map.buttons["top_left"]
+        self.window.input_event("F13", True, 2, self.window.generation, True)
+        self.window.input_event("F13", False, 2.01, self.window.generation, True)
+        self.window.map.unpulse(widget)
+        self.window.drain_live_view()
+        self.assertFalse(widget.input_held)
+
+    def test_live_lighting_still_tracks_press_and_release_outside_preview(self):
+        self.attach_live_view()
+        self.window.preview_input = False
+        widget = self.window.map.buttons["top_left"]
+        for down in (True, True, False):
+            self.window.live.lights["F13"] = (down, 1)
+            self.window.drain_live_view()
+            self.assertEqual(widget.input_held, down)
 
 
 @unittest.skipUnless(sys.platform == "win32", "Windows native output")

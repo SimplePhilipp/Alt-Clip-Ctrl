@@ -11,6 +11,7 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QDialogButtonBox, QTabWidget
 from PySide6.QtGui import QFontDatabase
 
+from altclipctrl import __version__
 from altclipctrl.model import DIAL_MODES, DIAL_SLOTS, DIRECTIONAL_ACTIONS, SLOTS, action, defaults, new_profile, validate
 from altclipctrl.ui import BindingDialog, MainWindow, OptionsDialog, TemporaryDialDialog, STYLE
 
@@ -30,7 +31,7 @@ def main():
         window = MainWindow(Path(directory) / "settings.json", diagnostic=True)
         window.show()
         app.processEvents()
-        assert window.windowTitle().startswith("Alt Clip Ctrl 2.0.0")
+        assert window.windowTitle().startswith(f"Alt Clip Ctrl {__version__}")
         assert len(window.map.buttons) == 12
         assert window.map.buttons["pressed_ccw"].x() < window.map.buttons["ccw"].x() < window.map.buttons["neutral"].x() < window.map.buttons["cw"].x() < window.map.buttons["pressed_cw"].x()
         window.grab().save(str(out / "altclipctrl-main.png"))

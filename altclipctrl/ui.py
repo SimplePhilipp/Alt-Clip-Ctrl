@@ -969,6 +969,11 @@ class MainWindow(QMainWindow):
                 self.status.setText("Could not save profile: " + str(exc))
         for event in events:
             self.record_activity(event)
+        # Own-window presses are displayed by the preview input path. Native
+        # snapshots describe background input and must not clear those holds
+        # or restore an old press after the preview has released it.
+        if self.preview_input:
+            return
         for widget in self.map.buttons.values():
             down, last_press = lights.get(widget.signal, (False, 0))
             flash = now - last_press < .08
