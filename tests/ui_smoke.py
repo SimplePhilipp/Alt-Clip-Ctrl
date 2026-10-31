@@ -13,7 +13,7 @@ from PySide6.QtGui import QFontDatabase
 
 from altclipctrl import __version__
 from altclipctrl.model import DIAL_MODES, DIAL_SLOTS, DIRECTIONAL_ACTIONS, SLOTS, action, defaults, new_profile, validate
-from altclipctrl.ui import BindingDialog, MainWindow, OptionsDialog, TemporaryDialDialog, STYLE
+from altclipctrl.ui import BindingDialog, MainWindow, OptionsDialog, STYLE
 
 
 def main():
@@ -45,6 +45,7 @@ def main():
             for gesture, editor in dialog.editors.items():
                 assert editor.kind.findData("profile") >= 0
                 assert (editor.kind.findData("hold_key") >= 0) == (gesture != "tap")
+                assert (editor.kind.findData("hold_dial") >= 0) == (gesture != "tap")
                 assert (editor.kind.findData("shortcut") >= 0) == (gesture == "tap")
                 for mode in DIAL_MODES:
                     assert (editor.kind.findData(mode) >= 0) == (gesture != "tap")
@@ -212,27 +213,31 @@ def main():
         held_dialog.grab().save(str(out / "altclipctrl-dial-cycling.png"))
         assert not held_dialog.editors["tap_hold"].reverse_direction.isChecked()
         held_editor.kind.setCurrentIndex(held_editor.kind.findData("dial_modifier"))
-        temporary = TemporaryDialDialog(held_dialog, held_editor.dial_mapping, window.config["profiles"])
+        temporary = held_editor.dial_controls
         assert set(temporary.editors) == set(DIAL_SLOTS)
         for editor in temporary.editors.values():
             assert all(editor.kind.findData(mode) == -1 for mode in DIAL_MODES)
         temporary.editors["cw"].kind.setCurrentIndex(temporary.editors["cw"].kind.findData("shortcut"))
         temporary.editors["cw"].key.combo.setCurrentText("F24")
-        temporary.commit()
-        held_editor.dial_mapping = temporary.result_mapping
+        temporary.select("cw")
         assert held_editor.read()["value"]["cw"] == action("shortcut", "F24")
         held_dialog.findChild(QTabWidget).setCurrentIndex(1)
         held_dialog.show()
         app.processEvents()
         held_dialog.grab().save(str(out / "altclipctrl-dial-mode.png"))
-        temporary.show()
-        app.processEvents()
         temporary.grab().save(str(out / "altclipctrl-temporary-dial.png"))
-        temporary.close()
         held_dialog.commit()
         assert held_dialog.result() == QDialog.DialogCode.Accepted
         check = held_dialog.result_settings["profiles"][1]["bindings"]["top_left"]["hold"]
         assert check["value"]["cw"] == action("shortcut", "F24")
+        combined = BindingDialog(window, window.config, "top_left")
+        combined.findChild(QTabWidget).setCurrentIndex(1)
+        editor = combined.editors["hold"]
+        editor.kind.setCurrentIndex(editor.kind.findData("hold_dial"))
+        combined.show()
+        app.processEvents()
+        combined.grab().save(str(out / "altclipctrl-hold-and-dial.png"))
+        combined.close()
         window.close()
         app.processEvents()
     print("PASS: 12 editors, gesture menus, profiles/cycles, action history, held-button lighting, guided assignment, repeated turns, draft/cancel isolation, Qt recording and previews.")

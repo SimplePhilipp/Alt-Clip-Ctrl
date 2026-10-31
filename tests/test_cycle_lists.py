@@ -11,7 +11,7 @@ from unittest.mock import patch
 from PySide6.QtWidgets import QApplication
 from altclipctrl.engine import Engine
 from altclipctrl.model import action, defaults, dial_map, load, new_cycle_list, new_profile, save, validate
-from altclipctrl.ui import BindingDialog, OptionsDialog, TemporaryDialDialog
+from altclipctrl.ui import BindingDialog, OptionsDialog, DialControlsEditor
 from tests.test_altclipctrl import FakeBackend, TEMP_ROOT
 
 
@@ -334,13 +334,12 @@ class CycleListUITests(unittest.TestCase):
         d.commit()
         output = d.profile["bindings"]["top_left"]["hold"]
         self.assertEqual(output, action("dial_cycle", {"cycle_id": other["cycle_lists"][1]["id"], "reverse": True}))
-        mapping_dialog = TemporaryDialDialog(None, dial_map(), self.settings["profiles"], other)
+        mapping_dialog = DialControlsEditor(dial_map(), self.settings["profiles"], other)
         self.dialogs.append(mapping_dialog)
         e = mapping_dialog.editors["cw"]
         e.kind.setCurrentIndex(e.kind.findData("cycle_next"))
         e.cycle.setCurrentIndex(1)
-        mapping_dialog.commit()
-        self.assertEqual(mapping_dialog.result_mapping["cw"]["value"]["cycle_id"], other["cycle_lists"][1]["id"])
+        self.assertEqual(mapping_dialog.read()["cw"]["value"]["cycle_id"], other["cycle_lists"][1]["id"])
 
 
 if __name__ == "__main__":

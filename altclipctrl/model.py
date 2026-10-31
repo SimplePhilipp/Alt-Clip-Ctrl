@@ -28,6 +28,7 @@ ACTIONS = {
     "cycle_next": "Cycle list · next", "cycle_previous": "Cycle list · previous",
     "scroll_up": "Scroll up", "scroll_down": "Scroll down", "profile": "Switch profile",
     "dial_scroll": "Dial scrolling", "dial_cycle": "Dial cycling", "dial_modifier": "Dial modifier",
+    "hold_dial": "Hold + dial",
 }
 MODIFIERS = ("Ctrl", "Alt", "Shift", "Meta")
 KEYS = [f"F{i}" for i in range(1, 25)] + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") + [
@@ -66,7 +67,7 @@ def action(kind="none", value=""):
 
 
 def allowed_actions(held):
-    excluded = {"shortcut"} | DIRECTIONAL_ACTIONS if held else {"hold_key"} | DIAL_MODES
+    excluded = {"shortcut"} | DIRECTIONAL_ACTIONS if held else {"hold_key", "hold_dial"} | DIAL_MODES
     return {key: text for key, text in ACTIONS.items() if key not in excluded}
 
 
@@ -76,7 +77,7 @@ def dial_map(profile=None):
 
 def references_profile(output, profile_id):
     return (output["kind"] == "profile" and output["value"] == profile_id) or (
-        output["kind"] == "dial_modifier" and any(references_profile(item, profile_id) for item in output["value"].values()))
+        output["kind"] in ("dial_modifier", "hold_dial") and any(references_profile(item, profile_id) for item in output["value"].values()))
 
 
 def cycle_id(profile, output):
@@ -93,7 +94,7 @@ def references_cycle(output, selected, default_id):
     if output["kind"] in ("cycle_next", "cycle_previous", "dial_cycle"):
         value = output["value"]
         return (value.get("cycle_id", default_id) if isinstance(value, dict) else default_id) == selected
-    return output["kind"] == "dial_modifier" and any(references_cycle(item, selected, default_id) for item in output["value"].values())
+    return output["kind"] in ("dial_modifier", "hold_dial") and any(references_cycle(item, selected, default_id) for item in output["value"].values())
 
 
 def new_cycle_list(name="New list", items=None):
@@ -105,6 +106,15 @@ def validate_output(output, ids, *, held=False, cycles=None):
     kind, value = output["kind"], output["value"]
     if kind not in allowed_actions(held):
         raise ValueError("Choose a dial mode or Hold a key for held gestures; directional actions and Key / shortcut belong to Tap.")
+    if kind == "hold_dial":
+        if not isinstance(value, dict) or set(value) != {"without_dial", "with_dial"}:
+            raise ValueError("Choose both the without-dial and with-dial actions.")
+        if any(not isinstance(part, dict) for part in value.values()):
+            raise ValueError("Choose valid actions for both without dial and with dial.")
+        if value["without_dial"].get("kind") not in ("none", "hold_key") or value["with_dial"].get("kind") not in DIAL_MODES | {"none"}:
+            raise ValueError("Without dial: choose No action or Hold a key. With dial: choose No action or a dial mode.")
+        for part in value.values():
+            validate_output(part, ids, held=True, cycles=cycles)
     if kind in ("shortcut", "hold_key"):
         output["value"] = normalize(value, held=kind == "hold_key")
     if kind == "profile" and value not in ids:

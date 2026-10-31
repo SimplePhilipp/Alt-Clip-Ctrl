@@ -18,6 +18,7 @@ class State:
     output: tuple = ()
     dial_action: dict | None = None
     dial_order: int = 0
+    dial_pending: dict | None = None
     override: tuple = ()
 
 
@@ -74,7 +75,7 @@ class Engine:
         binding = self.profile["bindings"][slot]
         state = self.states.setdefault(slot, State())
         if down and (slot in ROTATIONS or slot == "neutral"):
-            if self.prepare_dial(now):
+            if self.prepare_dial(now, turning=slot in ROTATIONS):
                 return
         if slot in ROTATIONS:
             if down and (not state.down or repeated):
@@ -142,6 +143,7 @@ class Engine:
         if state.dial_action:
             self.last_scroll = None
         state.dial_action = None
+        state.dial_pending = None
         for other in self.states.values():
             if other.override and other.override[0] is state:
                 other.used = True
@@ -164,20 +166,38 @@ class Engine:
         slot = next((slot for slot, state in self.states.items() if state is layer), None)
         return self.profile["bindings"][slot]["name"] if slot else ""
 
-    def prepare_dial(self, now):
+    def prepare_dial(self, now, *, turning=True):
         # A first dial movement can start a held dial mode before the hold timer fires.
-        candidates = [(slot, state) for slot, state in self.states.items()
-                      if slot not in ROTATIONS and state.down and not state.held and not state.override
-                      and self.profile["bindings"][slot]["hold"]["kind"] in DIAL_MODES]
+        candidates = []
+        for slot, state in self.states.items():
+            if slot in ROTATIONS or not state.down or state.override:
+                continue
+            kind = self.profile["bindings"][slot]["hold"]["kind"]
+            if turning and state.dial_pending is not None:
+                candidates.append((slot, state))
+            elif not state.held and (kind in DIAL_MODES or (turning and kind == "hold_dial")):
+                candidates.append((slot, state))
         for slot, state in sorted(candidates, key=lambda pair: pair[1].started):
             state.held = True
             state.released = None
-            if self.invoke(slot, "hold", state):
+            pending = state.dial_pending
+            if pending is None and self.profile["bindings"][slot]["hold"]["kind"] == "hold_dial":
+                pending = self.profile["bindings"][slot]["hold"]["value"]["with_dial"]
+            if pending is not None:
+                # Release pan/modifier output before the very first wheel/key
+                # packet. The dial mode stays active until the button is released.
+                self.release(state)
+                if pending["kind"] == "none":
+                    self.dial_order += 1
+                    state.dial_action, state.dial_order = pending, self.dial_order
+            if self.invoke(slot, "tap_hold" if state.second else "hold", state, output_override=pending):
                 return True
         return False
 
     def turn_output(self, layer, slot):
         mode = layer.dial_action
+        if mode["kind"] == "none":
+            return action()
         if mode["kind"] == "dial_modifier":
             return mode["value"][slot]
         clockwise = slot in ("cw", "pressed_cw")
@@ -212,6 +232,9 @@ class Engine:
         if kind in DIAL_MODES and state is not None:
             self.dial_order += 1
             state.dial_action, state.dial_order = output, self.dial_order
+        elif kind == "hold_dial" and state is not None:
+            state.dial_pending = value["with_dial"]
+            self.execute(value["without_dial"], state)
         elif kind == "shortcut":
             keys = chord(value)
             self.backend.shortcut(keys, set(self.held_counts))
@@ -267,6 +290,9 @@ class Engine:
                 detail += " · " + cycle_list(profile, output)["name"]
         elif kind in ("shortcut", "hold_key"):
             detail = ("Hold " if kind == "hold_key" else "Send ") + value
+        elif kind == "hold_dial":
+            plain = value["without_dial"]
+            detail = (("Hold " + plain["value"]) if plain["kind"] == "hold_key" else "No action") + " · turn dial to switch"
         elif kind.startswith("scroll_"):
             direction = (1 if kind == "scroll_up" else -1) * (-1 if self.settings["reverse_scroll"] else 1)
             detail = f"Scroll {'up' if direction > 0 else 'down'} · {amount if amount is not None else self.settings['scroll_amount']} notch(es)"

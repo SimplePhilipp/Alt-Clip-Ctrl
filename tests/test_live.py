@@ -90,6 +90,19 @@ class LiveInputTests(unittest.TestCase):
         self.event("F21", True, now + .001)
         self.assertEqual(self.backend.events, [("scroll", -1)])
 
+    def test_hold_and_dial_releases_plain_output_before_first_native_dispatch(self):
+        self.settings["profiles"][0]["bindings"]["top_left"]["tap_hold"] = action("hold_dial", {
+            "without_dial": action("hold_key", "Space"), "with_dial": action("dial_scroll", {"reverse": False})})
+        self.live.configure(self.settings)
+        now = self.activate()
+        self.assertEqual(self.backend.events, [("down", "Space")])
+        self.event("F23", True, now)
+        self.assertEqual(self.backend.events, [("down", "Space"), ("up", "Space"), ("scroll", 1)])
+        self.backend.window = 21
+        self.live.sync_scope()
+        self.assertIsNone(self.live.engine.dial_layer)
+        self.assertFalse(self.live.engine.held_counts)
+
     def test_own_window_remains_preview_and_never_sends_native_output(self):
         self.backend.program = "@self"
         self.backend.window = 10

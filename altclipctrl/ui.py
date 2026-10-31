@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
     QFormLayout, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QInputDialog,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton,
-    QScrollArea, QSizePolicy, QSpinBox, QDoubleSpinBox, QTabWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QScrollArea, QSizePolicy, QSpinBox, QDoubleSpinBox, QStackedWidget, QTabWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from .engine import Engine
@@ -162,16 +162,20 @@ class KeyEditor(QWidget):
 
 
 class ActionEditor(QWidget):
-    def __init__(self, output, profiles, allow_hold, default_dial=None, active_profile=None):
+    def __init__(self, output, profiles, allow_hold, default_dial=None, active_profile=None, choices=None):
         super().__init__()
         self.profiles = profiles
         self.cycle_profile = active_profile or profiles[0]
-        self.dial_mapping = copy.deepcopy(output["value"] if output["kind"] == "dial_modifier" else default_dial or dial_map())
+        self.initial_output = copy.deepcopy(output)
+        self.default_dial = default_dial
+        self.dial_controls = None
+        self.split = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.kind = QComboBox()
         for key, text in allowed_actions(allow_hold).items():
-            self.kind.addItem(text, key)
+            if choices is None or key in choices:
+                self.kind.addItem(text, key)
         layout.addWidget(self.kind)
         self.key = KeyEditor(output["value"] if output["kind"] in ("shortcut", "hold_key") else "B", held=allow_hold)
         layout.addWidget(self.key)
@@ -191,8 +195,13 @@ class ActionEditor(QWidget):
             self.cycle.setCurrentIndex(self.cycle.findData(output["value"]["cycle_id"]))
         cycle_form.addRow("Cycle list", self.cycle)
         layout.addWidget(self.cycle_picker)
-        self.dial_button = button("Configure temporary dial controls…", self.edit_dial)
-        layout.addWidget(self.dial_button)
+        if self.kind.findData("dial_modifier") >= 0:
+            self.dial_controls = DialControlsEditor(output["value"] if output["kind"] == "dial_modifier" else default_dial or dial_map(), profiles, self.cycle_profile)
+            layout.addWidget(self.dial_controls)
+        self.split_container = QWidget()
+        self.split_layout = QVBoxLayout(self.split_container)
+        self.split_layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.split_container)
         self.reverse_direction = QCheckBox("Reverse direction")
         self.reverse_direction.setChecked(bool(output["value"].get("reverse", False)) if output["kind"] in ("dial_scroll", "dial_cycle") and isinstance(output["value"], dict) else False)
         layout.addWidget(self.reverse_direction)
@@ -201,16 +210,31 @@ class ActionEditor(QWidget):
         self.kind.setCurrentIndex(max(0, self.kind.findData(output["kind"])))
         self.kind.currentIndexChanged.connect(self.refresh)
         self.refresh()
+        if choices is not None:
+            self.hint.hide()
 
     def refresh(self):
         kind = self.kind.currentData()
         self.key.setVisible(kind in ("shortcut", "hold_key"))
         self.profile.setVisible(kind == "profile")
         self.cycle_picker.setVisible(kind in ("cycle_next", "cycle_previous", "dial_cycle"))
-        self.dial_button.setVisible(kind == "dial_modifier")
+        if self.dial_controls:
+            self.dial_controls.setVisible(kind == "dial_modifier")
+        if kind == "hold_dial" and self.split is None:
+            value = self.initial_output["value"] if self.initial_output["kind"] == "hold_dial" else {
+                "without_dial": {"kind": "hold_key", "value": "Space"}, "with_dial": {"kind": "dial_scroll", "value": {"reverse": False}}}
+            self.split = {}
+            for part, title, choices in (("without_dial", "Without turning", ("none", "hold_key")),
+                                         ("with_dial", "When turning", ("none", "dial_scroll", "dial_cycle", "dial_modifier"))):
+                self.split_layout.addWidget(label(title, "section"))
+                editor = ActionEditor(value[part], self.profiles, True, self.default_dial, self.cycle_profile, choices)
+                self.split[part] = editor
+                self.split_layout.addWidget(editor)
+        self.split_container.setVisible(kind == "hold_dial")
         self.reverse_direction.setVisible(kind in ("dial_scroll", "dial_cycle"))
         self.hint.setText({"none": "This gesture sends nothing.", "shortcut": "Send a key or chord once. Example: Ctrl+Shift+F24.",
             "hold_key": "Keep the key or chord down until you release this button.",
+            "hold_dial": "Hold alone for the first action. The first turn releases that output and switches to the dial action until you release the button.",
             "cycle_next": "Move forward through the selected cycle list. Manage lists in Options.",
             "cycle_previous": "Move backward through the selected cycle list. Manage lists in Options.",
             "scroll_up": "Scroll at the mouse pointer. Amount and reversal are in Options.",
@@ -222,6 +246,8 @@ class ActionEditor(QWidget):
 
     def read(self):
         kind = self.kind.currentData()
+        if kind == "hold_dial":
+            return {"kind": kind, "value": {part: editor.read() for part, editor in self.split.items()}}
         if kind in ("cycle_next", "cycle_previous", "dial_cycle"):
             value = {"cycle_id": self.cycle.currentData()}
             if kind == "dial_cycle":
@@ -231,52 +257,69 @@ class ActionEditor(QWidget):
                 self.profile.currentData() if kind == "profile" else copy.deepcopy(self.dial_mapping) if kind == "dial_modifier" else
                 {"reverse": self.reverse_direction.isChecked()} if kind == "dial_scroll" else ""}
 
-    def edit_dial(self):
-        dialog = TemporaryDialDialog(self, self.dial_mapping, self.profiles, self.cycle_profile)
-        if dialog.exec():
-            self.dial_mapping = dialog.result_mapping
+    @property
+    def dial_mapping(self):
+        return self.dial_controls.read() if self.dial_controls else dial_map()
+
+    @dial_mapping.setter
+    def dial_mapping(self, mapping):
+        self.dial_controls.set_mapping(mapping)
 
 
-class TemporaryDialDialog(QDialog):
-    def __init__(self, parent, mapping, profiles, active_profile=None):
-        super().__init__(parent)
-        self.profiles = profiles
-        self.cycle_profile = active_profile or profiles[0]
-        self.setWindowTitle("Dial modifier · Temporary controls")
-        self.resize(700, 730)
+class DialControlsEditor(QWidget):
+    """The main page's five dial buttons, with one action visible at a time."""
+    def __init__(self, mapping, profiles, active_profile):
+        super().__init__()
+        self.profiles, self.active_profile = profiles, active_profile
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 20)
-        layout.addWidget(label("Temporary dial controls", "title"))
-        layout.addWidget(label("These outputs replace the normal dial actions only while the assigned button is held. Device input keys stay the same.", "muted", True))
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        content = QWidget()
-        rows = QVBoxLayout(content)
-        rows.setSpacing(16)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(label("Click a dial control to choose its action.", "muted"))
+        row = QHBoxLayout()
+        row.setSpacing(7)
+        self.buttons = {}
+        symbols = ("↓ ↶", "↶", "↓", "↷", "↓ ↷")
+        for slot, symbol in zip(DIAL_SLOTS, symbols):
+            widget = DeviceButton(slot)
+            widget.number = symbol
+            widget.setMinimumSize(56, 48)
+            widget.setAccessibleName(dict(SLOTS)[slot])
+            widget.clicked.connect(lambda checked=False, s=slot: self.select(s))
+            self.buttons[slot] = widget
+            row.addWidget(widget, 1)
+        layout.addLayout(row)
+        self.selection = label("", "section")
+        layout.addWidget(self.selection)
+        self.stack = QStackedWidget()
+        layout.addWidget(self.stack)
+        self.set_mapping(mapping)
+
+    def set_mapping(self, mapping):
+        while self.stack.count():
+            widget = self.stack.widget(0)
+            self.stack.removeWidget(widget)
+            widget.deleteLater()
         self.editors = {}
         for slot in DIAL_SLOTS:
-            rows.addWidget(label(dict(SLOTS)[slot], "section"))
-            editor = ActionEditor(mapping[slot], profiles, False, active_profile=self.cycle_profile)
+            editor = ActionEditor(copy.deepcopy(mapping[slot]), self.profiles, False, active_profile=self.active_profile)
+            editor.kind.currentIndexChanged.connect(self.refresh_tooltips)
             self.editors[slot] = editor
-            rows.addWidget(editor)
-            rows.addWidget(line())
-        scroll.setWidget(content)
-        layout.addWidget(scroll, 1)
-        footer = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        footer.accepted.connect(self.commit)
-        footer.rejected.connect(self.reject)
-        footer.button(QDialogButtonBox.StandardButton.Save).setObjectName("primary")
-        layout.addWidget(footer)
+            self.stack.addWidget(editor)
+        self.select("cw")
+        self.refresh_tooltips()
 
-    def commit(self):
-        mapping = {slot: editor.read() for slot, editor in self.editors.items()}
-        try:
-            for output in mapping.values():
-                validate_output(output, {p["id"] for p in self.profiles}, cycles=self.cycle_profile["cycle_lists"])
-            self.result_mapping = mapping
-            self.accept()
-        except Exception as exc:
-            error(self, exc)
+    def select(self, slot):
+        self.stack.setCurrentWidget(self.editors[slot])
+        self.selection.setText(dict(SLOTS)[slot])
+        for key, widget in self.buttons.items():
+            widget.assigning = key == slot
+            widget.update()
+
+    def refresh_tooltips(self):
+        for slot, widget in self.buttons.items():
+            widget.setToolTip(dict(SLOTS)[slot] + "\n" + self.editors[slot].kind.currentText())
+
+    def read(self):
+        return {slot: editor.read() for slot, editor in self.editors.items()}
 
 
 class BindingDialog(QDialog):
@@ -287,7 +330,7 @@ class BindingDialog(QDialog):
         self.profile = next(p for p in self.result_settings["profiles"] if p["id"] == settings["active_profile"])
         binding = self.profile["bindings"][slot]
         self.setWindowTitle("Configure · " + binding["name"])
-        self.resize(620, 620 if slot not in ROTATIONS else 450)
+        self.resize(640, 840 if slot not in ROTATIONS else 450)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 26, 28, 24)
         layout.setSpacing(15)
@@ -320,7 +363,10 @@ class BindingDialog(QDialog):
                 self.editors[gesture] = ActionEditor(binding[gesture], settings["profiles"], gesture != "tap", dial_map(self.profile), self.profile)
                 page_layout.addWidget(self.editors[gesture])
                 page_layout.addStretch()
-                tabs.addTab(page, GESTURE_NAMES[gesture])
+                scroll = QScrollArea()
+                scroll.setWidgetResizable(True)
+                scroll.setWidget(page)
+                tabs.addTab(scroll, GESTURE_NAMES[gesture])
             layout.addWidget(tabs, 1)
         layout.addStretch()
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
