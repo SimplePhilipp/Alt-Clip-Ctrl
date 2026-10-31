@@ -213,7 +213,9 @@ class Engine:
             self.dial_order += 1
             state.dial_action, state.dial_order = output, self.dial_order
         elif kind == "shortcut":
-            self.backend.shortcut(chord(value), set(self.held_counts))
+            keys = chord(value)
+            self.backend.shortcut(keys, set(self.held_counts))
+            self.track("+".join(keys), profile=self.profile)
         elif kind == "hold_key" and state is not None:
             acquired = []
             for key in chord(value, held=True):
@@ -229,8 +231,9 @@ class Engine:
             direction = 1 if kind == "cycle_next" else -1
             position = self.positions.get(position_key)
             position = (0 if direction > 0 else len(tools) - 1) if position is None else (position + direction) % len(tools)
-            self.positions[position_key] = position
-            self.backend.shortcut(chord(tools[position]["shortcut"]), set(self.held_counts))
+            keys = chord(tools[position]["shortcut"])
+            self.backend.shortcut(keys, set(self.held_counts))
+            self.track("+".join(keys), profile=self.profile)
         elif kind.startswith("scroll_"):
             direction = 1 if kind == "scroll_up" else -1
             amount = self.settings["scroll_amount"] if scroll_notches is None else scroll_notches
@@ -282,13 +285,14 @@ class Engine:
                        "action": detail})
         return switched
 
-    def track(self, signal):
-        # Physical direct shortcuts resynchronise independent profile positions.
-        for profile in self.settings["profiles"]:
-            for cycle in profile["cycle_lists"]:
+    def track(self, signal, *, profile=None):
+        # Match exact shortcuts. Nonmatching lists retain their last confirmed
+        # position; generated output only updates lists in its active profile.
+        for tracked_profile in self.settings["profiles"] if profile is None else (profile,):
+            for cycle in tracked_profile["cycle_lists"]:
                 for i, tool in enumerate(cycle["items"]):
                     if tool["shortcut"] == signal:
-                        self.positions[(profile["id"], cycle["id"])] = i
+                        self.positions[(tracked_profile["id"], cycle["id"])] = i
 
     def physical_release(self, key):
         # A real key-up must not end an output the controller is still holding.

@@ -1,6 +1,6 @@
 # Alt Clip Ctrl
 
-Alt Clip Ctrl 2.1 maps a programmable dial and its buttons to keyboard shortcuts, scrolling, tool cycles and application profiles. The new app was previously called Inbetween.
+Alt Clip Ctrl 2.1.1 maps a programmable dial and its buttons to keyboard shortcuts, scrolling, tool cycles and application profiles. The new app was previously called Inbetween.
 
 ![Alt Clip Ctrl controller map](docs/altclipctrl-main.png)
 
@@ -14,6 +14,7 @@ Give each controller signal its own key in the controller's configuration softwa
 - Tap (−), Hold (_) and Tap then hold (−_) actions.
 - Held dial scrolling, dial cycling and temporary dial modifiers, with direction reversal.
 - Multiple named cycle lists per profile, selectable separately for each button or dial action.
+- Shared shortcuts update matching lists in the current profile; other lists keep their last confirmed position.
 - A profile dropdown, program-linked profiles and button actions that switch profiles.
 - The three most recent actions, with input lighting and the actual called action.
 - Optional scroll acceleration with an adjustable **1×–10×** factor in **Options → Advanced**.

@@ -137,6 +137,113 @@ class MultipleCycleTests(unittest.TestCase):
             self.assertEqual(load(path), migrated)
 
 
+class SharedCyclePositionTests(unittest.TestCase):
+    def setUp(self):
+        self.settings = defaults()
+        self.profile = self.settings["profiles"][0]
+        self.a = self.profile["cycle_lists"][0]
+        self.a["name"] = "A"
+        self.a["items"] = [{"name": f"Tool {i}", "shortcut": str(i)} for i in range(1, 10)]
+        self.b = new_cycle_list("B", [{"name": "One", "shortcut": "1"},
+                                      {"name": "Five", "shortcut": "5"},
+                                      {"name": "Other tool", "shortcut": "F"}])
+        self.profile["cycle_lists"].append(self.b)
+        validate(self.settings)
+        self.backend, self.history = FakeBackend(), []
+        self.engine = Engine(self.settings, self.backend, activity=self.history.append)
+
+    def step(self, cycle, direction="next"):
+        self.engine.execute(action("cycle_" + direction, {"cycle_id": cycle["id"]}))
+
+    def position(self, cycle):
+        return self.engine.positions.get((self.profile["id"], cycle["id"]))
+
+    def test_shared_selection_updates_both_lists_in_either_direction(self):
+        self.step(self.b)  # 1
+        self.step(self.b)  # 5
+        self.assertEqual((self.position(self.a), self.position(self.b)), (4, 1))
+        self.step(self.a, "previous")  # 4 leaves B at 5
+        self.assertEqual((self.position(self.a), self.position(self.b)), (3, 1))
+        self.step(self.a)  # 5
+        self.step(self.b, "previous")  # 1
+        self.assertEqual((self.position(self.a), self.position(self.b)), (0, 0))
+
+    def test_nonmatching_output_keeps_last_confirmed_anchor_in_both_directions(self):
+        for direction, expected in (("next", "6"), ("previous", "4")):
+            with self.subTest(direction=direction):
+                self.engine.positions.clear()
+                for _ in range(3):
+                    self.step(self.b)  # 1, 5, F
+                self.assertEqual((self.position(self.a), self.position(self.b)), (4, 2))
+                self.step(self.a, direction)
+                self.assertEqual(self.backend.events[-2:], [("down", expected), ("up", expected)])
+                self.assertEqual(self.position(self.b), 2)
+
+    def test_unconfirmed_list_keeps_unknown_anchor_then_starts_at_correct_end(self):
+        self.step(self.b, "previous")  # F never confirms A
+        self.assertIsNone(self.position(self.a))
+        self.step(self.a, "previous")
+        self.assertEqual(self.backend.events[-2:], [("down", "9"), ("up", "9")])
+        self.assertEqual(self.position(self.b), 2)
+
+    def test_shortcut_outputs_and_manual_shortcuts_share_the_same_memory(self):
+        self.engine.execute(action("shortcut", "5"))
+        self.assertEqual((self.position(self.a), self.position(self.b)), (4, 1))
+        self.engine.execute(action("shortcut", "F"))
+        self.engine.track("9")
+        self.assertEqual((self.position(self.a), self.position(self.b)), (8, 2))
+        self.engine.execute(action("none"))
+        self.engine.execute(action("scroll_up"))
+        self.assertEqual((self.position(self.a), self.position(self.b)), (8, 2))
+        self.step(self.a)  # wraps to shared 1
+        self.assertEqual((self.position(self.a), self.position(self.b)), (0, 0))
+
+    def test_shortcut_identity_includes_modifiers_and_ignores_tool_names(self):
+        self.a["items"][0] = {"name": "Same name", "shortcut": "Ctrl+1"}
+        self.b["items"][0]["name"] = "Same name"
+        self.engine.execute(action("shortcut", "1"))
+        self.assertIsNone(self.position(self.a))
+        self.engine.execute(action("shortcut", "control+1"))
+        self.assertEqual((self.position(self.a), self.position(self.b)), (0, 0))
+        self.engine.execute(action("shortcut", "Shift+1"))
+        self.assertEqual((self.position(self.a), self.position(self.b)), (0, 0))
+
+    def test_generated_shortcuts_do_not_overwrite_other_profiles(self):
+        other = copy.deepcopy(self.profile)
+        other["id"], other["name"] = "other", "Other"
+        self.settings["profiles"].append(other)
+        self.engine.switch(other["id"])
+        self.engine.execute(action("shortcut", "1"))
+        self.engine.switch(self.profile["id"])
+        self.engine.execute(action("shortcut", "5"))
+        for cycle in other["cycle_lists"]:
+            self.assertEqual(self.engine.positions[(other["id"], cycle["id"])], 0)
+        self.assertEqual((self.position(self.a), self.position(self.b)), (4, 1))
+
+    def test_failed_output_does_not_confirm_positions(self):
+        self.engine.track("1")
+        with patch.object(self.backend, "shortcut", side_effect=OSError("Output unavailable")):
+            for output in (action("cycle_next", {"cycle_id": self.b["id"]}), action("shortcut", "5")):
+                with self.assertRaises(OSError):
+                    self.engine.execute(output)
+                self.assertEqual((self.position(self.a), self.position(self.b)), (0, 0))
+
+    def test_switching_held_dial_lists_resumes_from_shared_selection_and_keeps_history(self):
+        bindings = self.profile["bindings"]
+        for slot, cycle in (("top_left", self.a), ("top_middle", self.b)):
+            bindings[slot]["hold"] = action("dial_cycle", {"cycle_id": cycle["id"], "reverse": False})
+        self.engine.event("F14", True, 1)
+        for i in range(3):
+            self.engine.event("F23", True, 1.01 + i * .02)
+            self.engine.event("F23", False, 1.02 + i * .02)
+        self.engine.event("F14", False, 1.1)
+        self.engine.event("F13", True, 2)
+        self.engine.event("F23", True, 2.01)
+        self.assertEqual(self.backend.events[-2:], [("down", "6"), ("up", "6")])
+        self.assertEqual(self.history[-1]["action"], "Cycle → Tool 6 · 6 · A · via Top left")
+        self.assertEqual(self.position(self.b), 2)
+
+
 class CycleListUITests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
