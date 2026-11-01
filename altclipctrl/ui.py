@@ -493,23 +493,32 @@ class DeviceButton(QPushButton):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(self.rect()).adjusted(2, 2, -2, -2)
-        active = self.underMouse() or self.isDown() or self.flash or self.input_held or self.assigning or self.selected
-        painter.setBrush(QColor("#dff2f2" if active else "#ffffff"))
-        painter.setPen(QPen(QColor("#168b91" if active else "#181818"), 2))
+        pressed = self.flash or self.input_held
+        chosen = self.selected or self.assigning
+        if pressed:
+            fill, border, text = "#d1d5d8", "#626b70", "#252b2e"
+        elif chosen:
+            fill, border, text = "#168b91", "#126f75", "#ffffff"
+        elif self.underMouse() or self.isDown():
+            fill, border, text = "#f0f2f2", "#626b70", "#181818"
+        else:
+            fill, border, text = "#ffffff", "#181818", "#181818"
+        painter.setBrush(QColor(fill))
+        painter.setPen(QPen(QColor(border), 2))
         if self.slot.startswith("top_"):
             index = ("top_left", "top_middle", "top_right").index(self.slot)
             width = self.width()
             outline = QPainterPath()
             outline.addRoundedRect(QRectF(1-index*width, 1, width*3-2, 285), 35, 35)
             painter.setClipPath(outline)
-            painter.fillRect(self.rect(), QColor("#dff2f2" if active else "white"))
+            painter.fillRect(self.rect(), QColor(fill))
             painter.drawPath(outline)
             painter.drawLine(0, self.height()-1, width, self.height()-1)
             if index < 2:
                 painter.drawLine(width-1, 0, width-1, self.height())
         else:
             painter.drawRoundedRect(rect, 10 if not self.compact else 5, 10 if not self.compact else 5)
-        painter.setPen(QColor("#126f75" if active else "#181818"))
+        painter.setPen(QColor(text))
         if self.slot in ROTATIONS or self.slot == "neutral":
             painter.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, self.number)
@@ -1129,7 +1138,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.status)
         self.profiles.currentIndexChanged.connect(self.choose_profile)
         self.refresh()
-        self.edit_binding("right_lower")
         self.clock = QTimer(self)
         self.clock.setInterval(8)
         self.clock.timeout.connect(self.tick)

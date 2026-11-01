@@ -161,3 +161,5 @@ Physical dial latency, monitor presentation and subjective scrolling feel requir
 ## Workspace layout (2.3)
 
 Choose a control in the central schematic to edit it in the right panel. The top three face buttons share the main body outline. Recent actions stay on the left, with only the three latest entries. Save changes applies the selected control; Cancel discards its draft. Switching controls, changing profiles, opening Options or starting Quick assign asks about unsaved changes. The top Cycle lists button opens the lists tab directly. The application and running Windows taskbar use the Alt Clip Ctrl icon.
+
+The workspace opens without a selected control. Clicking a control to edit it marks it teal. Physical button presses and dial signals light their controls grey; on release, an edited control returns to teal. Hovering alone does not select a control.

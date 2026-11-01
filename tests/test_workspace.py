@@ -20,6 +20,9 @@ class WorkspaceTests(unittest.TestCase):
         root.mkdir(exist_ok=True)
         self.temp = tempfile.TemporaryDirectory(dir=root)
         self.window = MainWindow(Path(self.temp.name) / 'settings.json', diagnostic=True)
+        self.assertIsNone(self.window.inspector)
+        self.assertFalse(any(b.selected or b.input_held or b.flash for b in self.window.map.buttons.values()))
+        self.window.edit_binding('right_lower')
 
     def tearDown(self):
         self.window.close_inspector()
@@ -98,3 +101,24 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(editor.read()['value']['cw'], action('shortcut', 'F24'))
         self.assertTrue(window.save_inspector())
         self.assertEqual(load(window.path)['profiles'][0]['bindings']['right_lower']['hold']['value']['cw'], action('shortcut', 'F24'))
+
+    def test_physical_press_is_grey_and_release_restores_selection(self):
+        window = self.window
+        for slot in ('right_lower', 'top_left'):
+            window.edit_binding(slot)
+            widget = window.map.buttons[slot]
+            def fill():
+                image = widget.grab().toImage()
+                return image.pixelColor(image.width() // 2, image.height() // 2).name()
+            self.assertEqual(fill(), '#168b91')
+            window.map.set_held(widget.signal, True)
+            self.assertEqual(fill(), '#d1d5d8')
+            window.map.set_held(widget.signal, False)
+            window.map.unpulse(widget)
+            self.assertEqual(fill(), '#168b91')
+            self.assertTrue(widget.selected)
+        other = window.map.buttons['left_lower']
+        window.map.set_held(other.signal, True)
+        image = other.grab().toImage()
+        self.assertEqual(image.pixelColor(image.width() // 2, image.height() // 2).name(), '#d1d5d8')
+        self.assertFalse(other.selected)
