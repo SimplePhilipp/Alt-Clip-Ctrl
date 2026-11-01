@@ -5,7 +5,7 @@ from pathlib import Path
 import sys
 
 from PySide6.QtCore import QLockFile, QStandardPaths, QTimer, Qt
-from PySide6.QtGui import QFontDatabase
+from PySide6.QtGui import QFontDatabase, QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from .ui import MainWindow, STYLE
@@ -21,7 +21,14 @@ def main():
     args = parser.parse_args()
     if sys.platform == "darwin":
         QApplication.setAttribute(Qt.ApplicationAttribute.AA_MacDontSwapCtrlAndMeta)
+    if sys.platform == "win32":
+        import ctypes
+        shell = ctypes.WinDLL("shell32")
+        shell.SetCurrentProcessExplicitAppUserModelID.argtypes = [ctypes.c_wchar_p]
+        shell.SetCurrentProcessExplicitAppUserModelID.restype = ctypes.c_long
+        shell.SetCurrentProcessExplicitAppUserModelID("AltClipCtrl.Desktop")
     app = QApplication(sys.argv[:1])
+    app.setWindowIcon(QIcon(str(Path(__file__).resolve().parent / "assets" / "AltClipCtrl.ico")))
     # Resolve the previous Qt app identity before applying the new branding.
     app.setApplicationName("Inbetween")
     app.setOrganizationName("Inbetween")
@@ -83,6 +90,8 @@ def main():
                     for font in ("segoeui.ttf", "segoeuib.ttf", "seguisym.ttf"):
                         QFontDatabase.addApplicationFont(str(Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / font))
                 app.processEvents()
+                assert not app.windowIcon().isNull(), "Application icon is missing"
+                assert not window.windowIcon().isNull(), "Window icon is missing"
                 window.grab().save(str(args.smoke_test.with_suffix(".png")))
                 from .platforms import create_backend
                 backend = create_backend(lambda *_: False, lambda message: None, window.config["linux_device"])

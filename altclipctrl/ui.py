@@ -33,8 +33,8 @@ QPushButton { border: 1px solid #d4d4d4; border-radius: 7px; padding: 8px 13px; 
 QPushButton:hover { background: #f1f1f1; border-color: #161616; }
 QPushButton:pressed { background: #e5e5e5; }
 QPushButton:disabled { color: #999; border-color: #eee; }
-QPushButton#primary { background: #181818; border-color: #181818; color: white; font-weight: 600; }
-QPushButton#primary:hover { background: #383838; }
+QPushButton#primary { background: #168b91; border-color: #168b91; color: white; font-weight: 600; }
+QPushButton#primary:hover { background: #11767c; }
 QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QPlainTextEdit { border: 1px solid #d4d4d4; border-radius: 6px; padding: 7px; selection-background-color: #242424; selection-color: white; }
 QComboBox { min-height: 20px; padding-right: 24px; }
 QComboBox::drop-down { border: none; width: 24px; }
@@ -44,15 +44,18 @@ QCheckBox { spacing: 8px; }
 QCheckBox::indicator { width: 16px; height: 16px; border: 1px solid #aaa; border-radius: 4px; }
 QCheckBox::indicator:checked { background: #242424; border: 1px solid #242424; image: none; }
 QTabWidget::pane { border: 1px solid #dedede; border-radius: 7px; top: -1px; }
-QTabBar::tab { padding: 12px 18px; color: #777; border-bottom: 2px solid transparent; }
-QTabBar::tab:selected { color: #111; border-bottom: 2px solid #111; }
+QTabBar::tab { padding: 10px 9px; color: #777; border-bottom: 2px solid transparent; }
+QTabBar::tab:selected { color: #126f75; background: #e4f3f3; border-bottom: 2px solid #168b91; }
 QTableWidget { border: 1px solid #ddd; gridline-color: #eee; selection-background-color: #eee; selection-color: #111; }
 QHeaderView::section { background: #f6f6f6; border: none; border-bottom: 1px solid #ddd; padding: 8px; font-weight: 600; }
 QToolTip { background: #161616; color: #fff; border: none; padding: 8px; }
 QScrollArea { border: none; }
 QListWidget { border: none; outline: none; background: white; }
-QListWidget::item { border-bottom: 1px solid #e8e8e8; padding: 12px 0; }
-QListWidget::item:selected { background: #f5f5f5; color: #111; }
+QListWidget::item { border: 1px solid #e8eeee; border-radius: 9px; margin-bottom: 8px; padding: 14px 10px; }
+QListWidget::item:selected { background: #e4f3f3; color: #111; }
+QWidget#historyPanel { background: #f7f9f9; border-right: 1px solid #e3e9e9; }
+QWidget#historyPanel QLabel, QWidget#historyPanel QListWidget { background: transparent; }
+QWidget#inspectorPanel { border-left: 1px solid #e3e9e9; }
 """.replace("CHEVRON", (Path(__file__).parent / "assets" / "chevron.svg").as_posix())
 
 
@@ -153,9 +156,22 @@ class KeyEditor(QWidget):
         layout.addWidget(button("Record", self.record))
 
     def record(self):
-        dialog = Recorder(self, self.single)
-        if dialog.exec():
-            self.combo.setCurrentText(dialog.value)
+        owner = self.window()
+        while owner is not None and not isinstance(owner, MainWindow):
+            owner = owner.parentWidget()
+        previous_modal = owner.modal if owner else False
+        if owner:
+            owner.reset()
+            owner.modal = True
+            owner.refresh_scope()
+        try:
+            dialog = Recorder(self, self.single)
+            if dialog.exec():
+                self.combo.setCurrentText(dialog.value)
+        finally:
+            if owner:
+                owner.modal = previous_modal
+                owner.refresh_scope()
 
     def text(self):
         return self.combo.currentText().strip()
@@ -338,8 +354,10 @@ class DialControlsEditor(QWidget):
 
 
 class BindingDialog(QDialog):
-    def __init__(self, parent, settings, slot):
+    def __init__(self, parent, settings, slot, embedded=False):
         super().__init__(parent)
+        if embedded:
+            self.setWindowFlags(Qt.WindowType.Widget)
         self.result_settings = copy.deepcopy(settings)
         self.slot = slot
         self.profile = next(p for p in self.result_settings["profiles"] if p["id"] == settings["active_profile"])
@@ -347,12 +365,14 @@ class BindingDialog(QDialog):
         self.setWindowTitle("Configure · " + binding["name"])
         self.resize(640, 840 if slot not in ROTATIONS else 450)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 26, 28, 24)
+        layout.setContentsMargins(20, 20, 20, 20) if embedded else layout.setContentsMargins(28, 26, 28, 24)
         layout.setSpacing(15)
         layout.addWidget(label("BUTTON MAPPING" if slot not in ROTATIONS else "DIAL MAPPING", "eyebrow"))
-        layout.addWidget(label(dict(SLOTS)[slot], "title"))
+        layout.addWidget(label(binding["name"], "section" if embedded else "title"))
         layout.addWidget(label("Profile · " + self.profile["name"], "muted"))
         form = QFormLayout()
+        if embedded:
+            form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
         form.setSpacing(12)
         self.name = QLineEdit(binding["name"])
         self.input = KeyEditor(binding["input"], single=True)
@@ -371,7 +391,7 @@ class BindingDialog(QDialog):
             for gesture in GESTURES:
                 page = QWidget()
                 page_layout = QVBoxLayout(page)
-                page_layout.setContentsMargins(16, 20, 16, 16)
+                page_layout.setContentsMargins(12, 14, 12, 12)
                 help_text = {"tap": "Press and release once.", "hold": "Press and keep holding.",
                              "tap_hold": "Tap, release, then press and keep holding."}[gesture]
                 page_layout.addWidget(label(help_text, "muted"))
@@ -384,9 +404,13 @@ class BindingDialog(QDialog):
                 scroll.setWidget(page)
                 tabs.addTab(scroll, GESTURE_NAMES[gesture])
             layout.addWidget(tabs, 1)
+            if embedded:
+                tabs.setMinimumHeight(360)
         layout.addStretch()
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.button(QDialogButtonBox.StandardButton.Save).setObjectName("primary")
+        if embedded:
+            buttons.button(QDialogButtonBox.StandardButton.Save).setText("Save changes")
         buttons.accepted.connect(self.commit)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -409,6 +433,7 @@ class DeviceButton(QPushButton):
         self.slot, self.compact = slot, compact
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.selected = False
         self.flash = False
         self.input_held = False
         self.assigning = False
@@ -418,11 +443,23 @@ class DeviceButton(QPushButton):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(self.rect()).adjusted(2, 2, -2, -2)
-        active = self.underMouse() or self.isDown() or self.flash or self.input_held or self.assigning
-        painter.setBrush(QColor("#181818" if active else "#ffffff"))
-        painter.setPen(QPen(QColor("#181818"), 2))
-        painter.drawRoundedRect(rect, 10 if not self.compact else 5, 10 if not self.compact else 5)
-        painter.setPen(QColor("#ffffff" if active else "#181818"))
+        active = self.underMouse() or self.isDown() or self.flash or self.input_held or self.assigning or self.selected
+        painter.setBrush(QColor("#dff2f2" if active else "#ffffff"))
+        painter.setPen(QPen(QColor("#168b91" if active else "#181818"), 2))
+        if self.slot.startswith("top_"):
+            index = ("top_left", "top_middle", "top_right").index(self.slot)
+            width = self.width()
+            outline = QPainterPath()
+            outline.addRoundedRect(QRectF(1-index*width, 1, width*3-2, 285), 35, 35)
+            painter.setClipPath(outline)
+            painter.fillRect(self.rect(), QColor("#dff2f2" if active else "white"))
+            painter.drawPath(outline)
+            painter.drawLine(0, self.height()-1, width, self.height()-1)
+            if index < 2:
+                painter.drawLine(width-1, 0, width-1, self.height())
+        else:
+            painter.drawRoundedRect(rect, 10 if not self.compact else 5, 10 if not self.compact else 5)
+        painter.setPen(QColor("#126f75" if active else "#181818"))
         if self.slot in ROTATIONS or self.slot == "neutral":
             painter.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, self.number)
@@ -445,7 +482,7 @@ class DeviceMap(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.setMinimumSize(460, 430)
+        self.setMinimumSize(460, 440)
         self.buttons = {}
         for slot, _ in SLOTS:
             widget = DeviceButton(slot, slot.startswith(("left_", "right_")))
@@ -455,13 +492,14 @@ class DeviceMap(QWidget):
 
     def resizeEvent(self, event):
         cx = self.width() / 2
-        x, y, w = cx - 128, 14, 256
-        positions = {"top_left": (x+8, y+6, 78, 66), "top_middle": (x+89, y+6, 78, 66),
-            "top_right": (x+170, y+6, 78, 66), "left_upper": (x-11, y+84, 24, 62),
+        x, y, w = cx - 129, max(28, (self.height()-420)/2), 258
+        self.body_y = y
+        positions = {"top_left": (x, y, 86, 66), "top_middle": (x+86, y, 86, 66),
+            "top_right": (x+172, y, 86, 66), "left_upper": (x-11, y+84, 24, 62),
             "left_lower": (x-11, y+151, 24, 62), "right_upper": (x+w-13, y+84, 24, 62),
             "right_lower": (x+w-13, y+151, 24, 62)}
         for i, slot in enumerate(("pressed_ccw", "ccw", "neutral", "cw", "pressed_cw")):
-            positions[slot] = (cx-220+i*90, 356, 80, 66)
+            positions[slot] = (cx-220+i*90, y+328, 80, 66)
         for slot, rect in positions.items():
             self.buttons[slot].setGeometry(*(int(v) for v in rect))
 
@@ -469,6 +507,7 @@ class DeviceMap(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         cx = self.width() / 2
+        painter.translate(0, getattr(self, "body_y", 28)-14)
         painter.setPen(QPen(QColor("#181818"), 2.5))
         painter.setBrush(QColor("white"))
         painter.drawRoundedRect(QRectF(cx-128, 14, 256, 285), 35, 35)
@@ -478,19 +517,6 @@ class DeviceMap(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor("#181818"))
         painter.drawEllipse(QRectF(cx-6, 140, 12, 12))
-        painter.setPen(QPen(QColor("#d0d0d0"), 1, Qt.PenStyle.DashLine))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        path = QPainterPath()
-        path.moveTo(cx, 301)
-        path.lineTo(cx, 326)
-        path.moveTo(cx-180, 349)
-        path.lineTo(cx-180, 326)
-        path.lineTo(cx+180, 326)
-        path.lineTo(cx+180, 349)
-        for pos in (cx-90, cx, cx+90):
-            path.moveTo(pos, 326)
-            path.lineTo(pos, 349)
-        painter.drawPath(path)
 
     def refresh(self, profile):
         symbols = {"pressed_ccw": "↓ ↶", "ccw": "↶", "neutral": "↓", "cw": "↷", "pressed_cw": "↓ ↷"}
@@ -933,6 +959,7 @@ class MainWindow(QMainWindow):
         self.history_entries = deque(maxlen=3)
         self.last_foreground = ""
         self.modal = False
+        self.text_focus = False
         self.runtime_error = ""
         self.bridge = Bridge()
         self.bridge.input.connect(self.input_event)
@@ -947,40 +974,41 @@ class MainWindow(QMainWindow):
                                      lambda event: self.record_activity(event, preview=True))
         self.physical = set()
         self.setWindowTitle(f"Alt Clip Ctrl {__version__} · Dial driver")
-        self.resize(1000, 830)
-        self.setMinimumSize(900, 800)
+        self.resize(1320, 860)
+        self.setMinimumSize(1240, 800)
+        self.inspector = None
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
-        layout.setContentsMargins(36, 25, 36, 22)
-        layout.setSpacing(20)
-        header = QHBoxLayout()
-        profile_box = QVBoxLayout()
-        profile_box.setSpacing(5)
-        profile_box.addWidget(label("PROFILE", "eyebrow"))
+        layout.setContentsMargins(0, 0, 0, 12)
+        layout.setSpacing(0)
+        header_widget = QWidget()
+        header = QHBoxLayout(header_widget)
+        header.setContentsMargins(22, 18, 22, 18)
+        header.setSpacing(16)
+        header.addWidget(label("Alt Clip Ctrl", "section"))
+        header.addWidget(label("Profile", "muted"))
         self.profiles = QComboBox()
-        self.profiles.setMinimumWidth(220)
-        profile_box.addWidget(self.profiles)
-        header.addLayout(profile_box)
+        self.profiles.setMinimumWidth(175)
+        header.addWidget(self.profiles)
+        self.program_links = label("", "muted")
+        self.program_links.setMaximumWidth(220)
+        header.addWidget(self.program_links)
         header.addStretch()
-        brand = QVBoxLayout()
-        brand.setSpacing(2)
-        brand.addWidget(label("Alt Clip Ctrl", "section"))
-        brand.addWidget(label("DIAL DRIVER", "eyebrow"))
-        header.addLayout(brand)
-        header.addSpacing(24)
         self.enabled = QCheckBox("Enabled")
         self.enabled.setChecked(self.config["enabled"])
         self.enabled.toggled.connect(self.toggle_enabled)
         header.addWidget(self.enabled)
-        header.addSpacing(12)
+        self.quick_assign = button("Quick assign", self.start_assignment)
+        header.addWidget(self.quick_assign)
+        header.addWidget(button("Cycle lists", lambda: self.open_options(cycle_lists=True)))
         header.addWidget(button("Options", self.open_options))
-        layout.addLayout(header)
+        layout.addWidget(header_widget)
         layout.addWidget(line())
-        self.intro_title = label("Make every movement yours.", "title")
-        self.intro_hint = label("Click a control to choose its input and actions. Hover to see its name.", "muted")
-        layout.addWidget(self.intro_title)
-        layout.addWidget(self.intro_hint)
+        self.intro_title = label("", "title")
+        self.intro_hint = label("", "muted")
+        self.intro_title.hide()
+        self.intro_hint.hide()
         self.assignment_panel = QFrame()
         self.assignment_panel.setStyleSheet("QFrame { background: #f5f5f5; border-radius: 8px; } QLabel { background: transparent; }")
         assignment_layout = QVBoxLayout(self.assignment_panel)
@@ -1004,46 +1032,54 @@ class MainWindow(QMainWindow):
         self.assignment_panel.hide()
         layout.addWidget(self.assignment_panel)
         body = QHBoxLayout()
-        body.setSpacing(28)
+        body.setSpacing(0)
         history_area = QWidget()
-        history_area.setFixedWidth(270)
+        history_area.setObjectName("historyPanel")
+        history_area.setFixedWidth(240)
         history_layout = QVBoxLayout(history_area)
-        history_layout.setContentsMargins(0, 0, 0, 0)
-        history_layout.setSpacing(12)
+        history_layout.setContentsMargins(18, 22, 18, 18)
+        history_layout.setSpacing(14)
         history_header = QHBoxLayout()
-        history_header.addWidget(label("ACTION HISTORY", "eyebrow"), 1)
+        history_header.addWidget(label("Recent actions", "section"), 1)
         history_header.addWidget(button("Clear", self.clear_history))
         history_layout.addLayout(history_header)
-        self.history_empty = label("Press a controller button to see its gesture and called action here.", "muted", True)
+        self.history_empty = label("Press a controller button to see its action here.", "muted", True)
         history_layout.addWidget(self.history_empty)
         self.history = QListWidget()
         self.history.setWordWrap(True)
         self.history.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         history_layout.addWidget(self.history, 1)
-        history_layout.addWidget(label("Three most recent actions. History stays in this session.", "muted", True))
+        history_layout.addWidget(label("Your three most recent actions", "muted", True))
         body.addWidget(history_area)
         map_area = QVBoxLayout()
-        map_area.setSpacing(4)
-        map_header = QHBoxLayout()
-        map_header.addWidget(label("YOUR CONTROLLER", "eyebrow"), 1)
-        self.quick_assign = button("Quick assign", self.start_assignment)
-        map_header.addWidget(self.quick_assign)
-        map_area.addLayout(map_header)
+        map_area.setContentsMargins(12, 22, 12, 18)
+        map_area.setSpacing(8)
+        self.profile_title = label("", "section")
+        map_area.addWidget(label("YOUR CONTROLLER", "eyebrow"), 0, Qt.AlignmentFlag.AlignHCenter)
         self.map = DeviceMap()
         self.map.selected.connect(self.edit_binding)
         map_area.addWidget(self.map, 1)
-        body.addLayout(map_area, 3)
-        self.profile_title = label("", "section")
         self.mapping_count = label("", "muted")
-        self.program_links = label("", "muted", True)
-        map_area.addWidget(self.mapping_count)
-        map_area.addWidget(label("− Tap     _ Hold     −_ Tap then hold", "muted"))
+        map_area.addWidget(self.mapping_count, 0, Qt.AlignmentFlag.AlignHCenter)
+        map_area.addWidget(label("Click to configure · Hover to see its name", "muted"), 0, Qt.AlignmentFlag.AlignHCenter)
+        body.addLayout(map_area, 1)
+        self.inspector_area = QWidget()
+        self.inspector_area.setObjectName("inspectorPanel")
+        self.inspector_area.setFixedWidth(440)
+        self.inspector_layout = QVBoxLayout(self.inspector_area)
+        self.inspector_layout.setContentsMargins(0, 0, 0, 0)
+        self.inspector_empty = label("Select a control to choose its input and actions.", "muted", True)
+        self.inspector_empty.setContentsMargins(24, 24, 24, 24)
+        self.inspector_layout.addWidget(self.inspector_empty)
+        body.addWidget(self.inspector_area)
         layout.addLayout(body, 1)
         layout.addWidget(line())
         self.status = label("Starting input listener…", "muted", True)
+        self.status.setContentsMargins(22, 12, 22, 0)
         layout.addWidget(self.status)
         self.profiles.currentIndexChanged.connect(self.choose_profile)
         self.refresh()
+        self.edit_binding("right_lower")
         self.clock = QTimer(self)
         self.clock.setInterval(8)
         self.clock.timeout.connect(self.tick)
@@ -1052,6 +1088,7 @@ class MainWindow(QMainWindow):
         self.focus_clock.timeout.connect(self.refresh_scope)
         QApplication.instance().applicationStateChanged.connect(self.application_state)
         QApplication.instance().installEventFilter(self)
+        QApplication.instance().focusChanged.connect(self.editor_focus_changed)
         if not diagnostic:
             self.start_backend()
             self.focus_clock.start()
@@ -1069,6 +1106,8 @@ class MainWindow(QMainWindow):
             if self.recording_focus:
                 self.bridge.assignment.emit(signal, down, now, self.assignment_id)
                 return signal not in MODIFIERS
+            return False
+        if self.text_focus:
             return False
         if self.live and self.config["enabled"] and not self.modal:
             routed = self.live.capture(signal, down, now, self.backend.foreground_token(), injected=injected)
@@ -1183,6 +1222,8 @@ class MainWindow(QMainWindow):
                 else:
                     self.assignment_event(signal, down, time.monotonic(), self.assignment_id)
             return True
+        if isinstance(QApplication.focusWidget(), (QLineEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox)):
+            return super().eventFilter(watched, event)
         if self.preview_input and signal in self.active_inputs:
             if not event.isAutoRepeat():
                 self.input_event(signal, down, time.monotonic(), self.generation, True)
@@ -1190,6 +1231,10 @@ class MainWindow(QMainWindow):
         return super().eventFilter(watched, event)
 
     def start_assignment(self):
+        if not self.leave_inspector():
+            return
+        self.close_inspector()
+        self.inspector_area.setEnabled(False)
         self.reset()
         self.assignment_original_size = self.size()
         self.assignment_original_minimum = self.minimumHeight()
@@ -1250,10 +1295,11 @@ class MainWindow(QMainWindow):
     def cancel_assignment(self):
         self.assignment_id += 1
         self.assignment = None
+        self.inspector_area.setEnabled(True)
         self.map.highlight(None)
         self.assignment_panel.hide()
-        self.intro_title.show()
-        self.intro_hint.show()
+        self.intro_title.hide()
+        self.intro_hint.hide()
         self.quick_assign.setEnabled(True)
         self.profiles.setEnabled(True)
         self.enabled.setEnabled(True)
@@ -1343,7 +1389,17 @@ class MainWindow(QMainWindow):
         self.runtime_error = message
         self.status.setText("Input paused · " + message + " · Enable to retry.")
 
+    def editor_focus_changed(self, *_):
+        focus = QApplication.focusWidget()
+        editing = (QApplication.applicationState() == Qt.ApplicationState.ApplicationActive and
+                   isinstance(focus, (QLineEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox)))
+        if editing != self.text_focus:
+            self.text_focus = editing
+            self.reset()
+            self.refresh_scope()
+
     def application_state(self, state):
+        self.editor_focus_changed()
         self.recording_focus = state == Qt.ApplicationState.ApplicationActive
         if self.assignment is not None:
             if state != Qt.ApplicationState.ApplicationActive:
@@ -1367,12 +1423,12 @@ class MainWindow(QMainWindow):
             self.status.setText("Quick assign · Actions paused · " + ("Follow the highlighted control" if own else "Return to Alt Clip Ctrl to continue recording"))
             return
         if self.diagnostic:
-            self.preview_input = own and self.config["enabled"] and not self.modal
+            self.preview_input = own and self.config["enabled"] and not self.modal and not self.text_focus
             return
         if not self.backend or not self.backend.running:
             return
         if self.live:
-            self.live.set_paused(self.modal or not self.config["enabled"])
+            self.live.set_paused(self.modal or self.text_focus or not self.config["enabled"])
             self.live.sync_scope()
         foreground = self.backend.foreground()
         if foreground:
@@ -1391,11 +1447,11 @@ class MainWindow(QMainWindow):
                     {program.casefold() for program in p["programs"]}), None)
                 if match and match["id"] != self.engine.profile_id:
                     self.engine.switch(match["id"])
-        allowed = self.config["enabled"] and not own and not self.modal
+        allowed = self.config["enabled"] and not own and not self.modal and not self.text_focus
         if self.accept_input and not allowed:
             self.reset()
         self.accept_input = allowed
-        self.preview_input = self.config["enabled"] and own and not self.modal
+        self.preview_input = self.config["enabled"] and own and not self.modal and not self.text_focus
         self.active_inputs = frozenset(b["input"] for b in self.active_profile()["bindings"].values())
         if not self.config["enabled"]:
             self.status.setText("Input paused · " + self.runtime_error + " · Enable to retry." if self.runtime_error else
@@ -1423,7 +1479,8 @@ class MainWindow(QMainWindow):
         count = sum(any(b[g]["kind"] != "none" for g in GESTURES) for b in profile["bindings"].values())
         self.mapping_count.setText(f"{count} of 12 controls configured")
         links = profile["programs"]
-        self.program_links.setText("Linked to " + ", ".join(links) if links else "No program linked. Use this profile in any app.")
+        self.program_links.setText(", ".join(links) if links else "Any application")
+        self.program_links.setToolTip("Linked programs: " + ", ".join(links) if links else "No program linked. Use this profile in any app.")
         self.active_inputs = frozenset(b["input"] for b in profile["bindings"].values())
 
     def persist(self, result):
@@ -1442,6 +1499,10 @@ class MainWindow(QMainWindow):
         profile_id = self.profiles.currentData()
         if not profile_id or profile_id == self.config["active_profile"]:
             return
+        if not self.leave_inspector():
+            self.refresh()
+            return
+        self.close_inspector()
         try:
             result = copy.deepcopy(self.config)
             result["active_profile"] = profile_id
@@ -1462,28 +1523,95 @@ class MainWindow(QMainWindow):
             self.status.setText("Profile changed for this session; could not save: " + str(exc))
         self.refresh_scope()
 
-    def edit_binding(self, slot):
-        if self.assignment is not None:
-            return
-        self.reset()
-        self.modal = True
+    def close_inspector(self):
+        if self.inspector is not None:
+            self.inspector_layout.removeWidget(self.inspector_scroll)
+            self.inspector_scroll.deleteLater()
+            self.inspector = None
+        self.inspector_empty.show()
+        for widget in self.map.buttons.values():
+            widget.selected = False
+            widget.update()
+
+    def inspector_is_dirty(self):
+        if self.inspector is None:
+            return False
+        editor = self.inspector
+        original = self.inspector_original
         try:
-            dialog = BindingDialog(self, self.config, slot)
-            if dialog.exec():
-                self.persist(dialog.result_settings)
+            return (editor.name.text().strip() != original["name"] or editor.input.text() != original["input"] or
+                    any(part.read() != original[gesture] for gesture, part in editor.editors.items()))
+        except ValueError:
+            return True
+
+    def leave_inspector(self):
+        if not self.inspector_is_dirty():
+            return True
+        choice = QMessageBox.question(self, "Unsaved changes", "Save this control before continuing?",
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save)
+        if choice == QMessageBox.StandardButton.Cancel:
+            return False
+        if choice == QMessageBox.StandardButton.Save:
+            return self.save_inspector()
+        return True
+
+    def save_inspector(self):
+        editor = self.inspector
+        if editor is None:
+            return True
+        try:
+            binding = copy.deepcopy(self.inspector_original)
+            binding["name"], binding["input"] = editor.name.text().strip(), editor.input.text()
+            for gesture, part in editor.editors.items():
+                binding[gesture] = part.read()
+            result = copy.deepcopy(self.config)
+            profile = next((p for p in result["profiles"] if p["id"] == editor.profile["id"]), None)
+            if profile is None:
+                raise ValueError("This profile was removed. Cancel this edit and select another control.")
+            if profile["bindings"][editor.slot] != self.inspector_original:
+                raise ValueError("This control changed while you were editing. Cancel and reopen it before saving.")
+            profile["bindings"][editor.slot] = binding
+            validate(result)
+            self.persist(result)
+            self.inspector_original = copy.deepcopy(binding)
+            self.status.setText("Saved · " + binding["name"])
+            return True
         except Exception as exc:
             error(self, exc)
-        finally:
-            self.modal = False
-            self.refresh_scope()
+            return False
 
-    def open_options(self):
-        if self.assignment is not None:
+    def edit_binding(self, slot):
+        if self.assignment is not None or not self.leave_inspector():
             return
+        self.close_inspector()
+        dialog = BindingDialog(self, self.config, slot, embedded=True)
+        self.inspector = dialog
+        self.inspector_original = copy.deepcopy(dialog.profile["bindings"][slot])
+        buttons = dialog.findChild(QDialogButtonBox)
+        buttons.accepted.disconnect()
+        buttons.rejected.disconnect()
+        buttons.accepted.connect(self.save_inspector)
+        buttons.rejected.connect(self.close_inspector)
+        self.inspector_scroll = QScrollArea()
+        self.inspector_scroll.setWidgetResizable(True)
+        self.inspector_scroll.setWidget(dialog)
+        self.inspector_layout.addWidget(self.inspector_scroll)
+        self.inspector_empty.hide()
+        self.map.buttons[slot].selected = True
+        self.map.buttons[slot].update()
+        dialog.show()
+
+    def open_options(self, cycle_lists=False):
+        if self.assignment is not None or not self.leave_inspector():
+            return
+        self.close_inspector()
         self.reset()
         self.modal = True
         try:
             dialog = OptionsDialog(self, self.config, self.last_foreground)
+            if cycle_lists:
+                dialog.findChild(QTabWidget).setCurrentIndex(1)
             if dialog.exec():
                 device_changed = dialog.result_settings["linux_device"] != self.config["linux_device"]
                 self.persist(dialog.result_settings)
@@ -1511,10 +1639,14 @@ class MainWindow(QMainWindow):
             self.failed(str(exc))
 
     def closeEvent(self, event):
+        if not self.leave_inspector():
+            event.ignore()
+            return
         self.modal = True
         self.clock.stop()
         self.focus_clock.stop()
         self.reset()
+        QApplication.instance().focusChanged.disconnect(self.editor_focus_changed)
         QApplication.instance().removeEventFilter(self)
         if self.live:
             self.live.stop()
