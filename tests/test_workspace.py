@@ -76,3 +76,25 @@ class WorkspaceTests(unittest.TestCase):
             self.assertFalse(window.save_inspector())
         show_error.assert_called_once()
         self.assertEqual(window.config['profiles'][0]['bindings']['right_lower']['name'], 'Newer change')
+
+    def test_selection_defers_unused_controls_and_retains_later_edits(self):
+        from altclipctrl.ui import DialControlsEditor
+        window = self.window
+        self.assertEqual(window.inspector.findChildren(DialControlsEditor), [])
+        same_editor = window.inspector
+        window.inspector.name.setText('Draft name')
+        window.edit_binding('right_lower')
+        self.assertIs(window.inspector, same_editor)
+        self.assertEqual(window.inspector.name.text(), 'Draft name')
+        editor = window.inspector.editors['hold'].split['with_dial']
+        editor.kind.setCurrentIndex(editor.kind.findData('dial_modifier'))
+        controls = editor.dial_controls
+        output = controls.editors['cw']
+        output.kind.setCurrentIndex(output.kind.findData('shortcut'))
+        output.key.combo.setCurrentText('F24')
+        editor.kind.setCurrentIndex(editor.kind.findData('none'))
+        editor.kind.setCurrentIndex(editor.kind.findData('dial_modifier'))
+        self.assertIs(editor.dial_controls, controls)
+        self.assertEqual(editor.read()['value']['cw'], action('shortcut', 'F24'))
+        self.assertTrue(window.save_inspector())
+        self.assertEqual(load(window.path)['profiles'][0]['bindings']['right_lower']['hold']['value']['cw'], action('shortcut', 'F24'))

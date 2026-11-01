@@ -208,7 +208,7 @@ class HoldAndDialUITests(unittest.TestCase):
                     from PySide6.QtWidgets import QTabWidget
                     dialog.findChild(QTabWidget).setCurrentIndex(1)
                     self.app.processEvents()
-                    dialog.grab().save("docs/altclipctrl-hold-visible.png")
+                    dialog.grab().save(str(TEMP_ROOT / "hold-visible.png"))
             finally:
                 dialog.close()
 

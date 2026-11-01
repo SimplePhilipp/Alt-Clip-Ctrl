@@ -198,27 +198,12 @@ class ActionEditor(QWidget):
             if choices is None or key in choices:
                 self.kind.addItem(text, key)
         layout.addWidget(self.kind)
-        self.key = KeyEditor(output["value"] if output["kind"] in ("shortcut", "hold_key") else "B", held=allow_hold)
-        layout.addWidget(self.key)
-        self.profile = QComboBox()
-        for profile in profiles:
-            self.profile.addItem(profile["name"], profile["id"])
-        if output["kind"] == "profile":
-            self.profile.setCurrentIndex(self.profile.findData(output["value"]))
-        layout.addWidget(self.profile)
-        self.cycle_picker = QWidget()
-        cycle_form = QFormLayout(self.cycle_picker)
-        cycle_form.setContentsMargins(0, 0, 0, 0)
-        self.cycle = QComboBox()
-        for cycle in self.cycle_profile["cycle_lists"]:
-            self.cycle.addItem(cycle["name"], cycle["id"])
-        if output["kind"] in ("cycle_next", "cycle_previous", "dial_cycle") and isinstance(output["value"], dict) and "cycle_id" in output["value"]:
-            self.cycle.setCurrentIndex(self.cycle.findData(output["value"]["cycle_id"]))
-        cycle_form.addRow("Cycle list", self.cycle)
-        layout.addWidget(self.cycle_picker)
-        if self.kind.findData("dial_modifier") >= 0:
-            self.dial_controls = DialControlsEditor(output["value"] if output["kind"] == "dial_modifier" else default_dial or dial_map(), profiles, self.cycle_profile)
-            layout.addWidget(self.dial_controls)
+        self._key = None
+        self._profile_picker = None
+        self._cycle = None
+        self._cycle_picker = None
+        self.allow_hold = allow_hold
+        self.initial_dial_mapping = copy.deepcopy(output["value"] if output["kind"] == "dial_modifier" else default_dial or dial_map())
         self.split_container = QWidget()
         self.split_layout = QVBoxLayout(self.split_container)
         self.split_layout.setContentsMargins(0, 0, 0, 0)
@@ -238,9 +223,20 @@ class ActionEditor(QWidget):
 
     def refresh(self):
         kind = self.kind.currentData()
-        self.key.setVisible(kind in ("shortcut", "hold_key"))
-        self.profile.setVisible(kind == "profile")
-        self.cycle_picker.setVisible(kind in ("cycle_next", "cycle_previous", "dial_cycle"))
+        if kind in ("shortcut", "hold_key"):
+            self.key.show()
+        elif self._key is not None:
+            self._key.hide()
+        if kind == "profile":
+            self.profile.show()
+        elif self._profile_picker is not None:
+            self._profile_picker.hide()
+        if kind in ("cycle_next", "cycle_previous", "dial_cycle"):
+            self.cycle_picker.show()
+        elif self._cycle_picker is not None:
+            self._cycle_picker.hide()
+        if kind == "dial_modifier":
+            self.ensure_dial_controls()
         if self.dial_controls:
             self.dial_controls.setVisible(kind == "dial_modifier")
         if kind == "hold_dial" and self.split is None:
@@ -289,12 +285,66 @@ class ActionEditor(QWidget):
                 {"reverse": self.reverse_direction.isChecked()} if kind == "dial_scroll" else ""}
 
     @property
+    def key(self):
+        if self._key is None:
+            output = self.initial_output
+            self._key = KeyEditor(output["value"] if output["kind"] in ("shortcut", "hold_key") else "B", held=self.allow_hold)
+            self.layout().insertWidget(1, self._key)
+            self._key.setVisible(self.kind.currentData() in ("shortcut", "hold_key"))
+        return self._key
+
+    @property
+    def profile(self):
+        if self._profile_picker is None:
+            self._profile_picker = QComboBox()
+            for profile in self.profiles:
+                self._profile_picker.addItem(profile["name"], profile["id"])
+            if self.initial_output["kind"] == "profile":
+                self._profile_picker.setCurrentIndex(self._profile_picker.findData(self.initial_output["value"]))
+            self.layout().insertWidget(1, self._profile_picker)
+            self._profile_picker.setVisible(self.kind.currentData() == "profile")
+        return self._profile_picker
+
+    def ensure_cycle_picker(self):
+        if self._cycle_picker is None:
+            self._cycle_picker = QWidget()
+            form = QFormLayout(self._cycle_picker)
+            form.setContentsMargins(0, 0, 0, 0)
+            self._cycle = QComboBox()
+            for cycle in self.cycle_profile["cycle_lists"]:
+                self._cycle.addItem(cycle["name"], cycle["id"])
+            output = self.initial_output
+            if output["kind"] in ("cycle_next", "cycle_previous", "dial_cycle") and isinstance(output["value"], dict) and "cycle_id" in output["value"]:
+                self._cycle.setCurrentIndex(self._cycle.findData(output["value"]["cycle_id"]))
+            form.addRow("Cycle list", self._cycle)
+            self.layout().insertWidget(1, self._cycle_picker)
+            self._cycle_picker.setVisible(self.kind.currentData() in ("cycle_next", "cycle_previous", "dial_cycle"))
+
+    @property
+    def cycle_picker(self):
+        self.ensure_cycle_picker()
+        return self._cycle_picker
+
+    @property
+    def cycle(self):
+        self.ensure_cycle_picker()
+        return self._cycle
+
+    def ensure_dial_controls(self):
+        if self.dial_controls is None:
+            self.dial_controls = DialControlsEditor(self.initial_dial_mapping, self.profiles, self.cycle_profile)
+            self.layout().insertWidget(self.layout().indexOf(self.split_container), self.dial_controls)
+        return self.dial_controls
+
+    @property
     def dial_mapping(self):
-        return self.dial_controls.read() if self.dial_controls else dial_map()
+        return self.dial_controls.read() if self.dial_controls else copy.deepcopy(self.initial_dial_mapping)
 
     @dial_mapping.setter
     def dial_mapping(self, mapping):
-        self.dial_controls.set_mapping(mapping)
+        self.initial_dial_mapping = copy.deepcopy(mapping)
+        if self.dial_controls is not None:
+            self.dial_controls.set_mapping(mapping)
 
 
 class DialControlsEditor(QWidget):
@@ -1582,6 +1632,10 @@ class MainWindow(QMainWindow):
             return False
 
     def edit_binding(self, slot):
+        if (self.inspector is not None and self.inspector.slot == slot and
+                self.inspector.profile["id"] == self.config["active_profile"] and
+                self.inspector_original == self.active_profile()["bindings"][slot]):
+            return
         if self.assignment is not None or not self.leave_inspector():
             return
         self.close_inspector()
