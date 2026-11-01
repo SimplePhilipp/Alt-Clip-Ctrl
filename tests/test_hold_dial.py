@@ -189,6 +189,29 @@ class HoldAndDialUITests(unittest.TestCase):
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
+    def test_both_sections_are_visible_without_selecting_a_combination(self):
+        for output in (action(), action("hold_key", "Space"), action("dial_scroll", {"reverse": False}), combined()):
+            settings = defaults()
+            for gesture in ("hold", "tap_hold"):
+                settings["profiles"][0]["bindings"]["right_lower"][gesture] = copy.deepcopy(output)
+            dialog = BindingDialog(None, settings, "right_lower")
+            try:
+                dialog.show()
+                self.app.processEvents()
+                for gesture in ("hold", "tap_hold"):
+                    editor = dialog.editors[gesture]
+                    self.assertTrue(editor.kind.isHidden())
+                    self.assertFalse(editor.split_container.isHidden())
+                    self.assertGreater(editor.split["with_dial"].y(), editor.split["without_dial"].y())
+                    self.assertEqual(editor.read(), output)
+                if output["kind"] == "none":
+                    from PySide6.QtWidgets import QTabWidget
+                    dialog.findChild(QTabWidget).setCurrentIndex(1)
+                    self.app.processEvents()
+                    dialog.grab().save("docs/altclipctrl-hold-visible.png")
+            finally:
+                dialog.close()
+
     def test_inline_five_controls_keep_separate_actions_and_cancel_isolated(self):
         settings = defaults()
         original = copy.deepcopy(settings)
@@ -217,9 +240,12 @@ class HoldAndDialUITests(unittest.TestCase):
             for gesture in ("hold", "tap_hold"):
                 editor = dialog.editors[gesture]
                 editor.kind.setCurrentIndex(editor.kind.findData("hold_dial"))
-                self.assertEqual(editor.read(), combined())
+                self.assertTrue(editor.kind.isHidden())
+                self.assertIsNotNone(editor.split)
+                editor.split["without_dial"].kind.setCurrentIndex(editor.split["without_dial"].kind.findData("hold_key"))
+                editor.split["with_dial"].kind.setCurrentIndex(editor.split["with_dial"].kind.findData("dial_scroll"))
                 editor.split["without_dial"].key.combo.setCurrentText("Shift" if gesture == "tap_hold" else "Space")
-                self.assertEqual(editor.split["without_dial"].kind.count(), 2)
+                self.assertEqual(editor.split["without_dial"].kind.count(), 3)
                 self.assertEqual(editor.split["with_dial"].kind.count(), 4)
             dialog.commit()
             self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)

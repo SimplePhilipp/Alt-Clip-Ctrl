@@ -162,8 +162,13 @@ class KeyEditor(QWidget):
 
 
 class ActionEditor(QWidget):
-    def __init__(self, output, profiles, allow_hold, default_dial=None, active_profile=None, choices=None):
+    def __init__(self, output, profiles, allow_hold, default_dial=None, active_profile=None, choices=None, separate_dial=False):
         super().__init__()
+        self.separate_dial = separate_dial
+        if separate_dial and output["kind"] != "hold_dial":
+            output = {"kind": "hold_dial", "value": {
+                "without_dial": copy.deepcopy(output) if output["kind"] not in DIAL_MODES else {"kind": "none", "value": ""},
+                "with_dial": copy.deepcopy(output) if output["kind"] in DIAL_MODES else {"kind": "none", "value": ""}}}
         self.profiles = profiles
         self.cycle_profile = active_profile or profiles[0]
         self.initial_output = copy.deepcopy(output)
@@ -210,6 +215,8 @@ class ActionEditor(QWidget):
         self.kind.setCurrentIndex(max(0, self.kind.findData(output["kind"])))
         self.kind.currentIndexChanged.connect(self.refresh)
         self.refresh()
+        if separate_dial:
+            self.kind.hide()
         if choices is not None:
             self.hint.hide()
 
@@ -224,8 +231,8 @@ class ActionEditor(QWidget):
             value = self.initial_output["value"] if self.initial_output["kind"] == "hold_dial" else {
                 "without_dial": {"kind": "hold_key", "value": "Space"}, "with_dial": {"kind": "dial_scroll", "value": {"reverse": False}}}
             self.split = {}
-            for part, title, choices in (("without_dial", "Without turning", ("none", "hold_key")),
-                                         ("with_dial", "When turning", ("none", "dial_scroll", "dial_cycle", "dial_modifier"))):
+            for part, title, choices in (("without_dial", "Without turning", ("none", "hold_key", "profile") if self.separate_dial else ("none", "hold_key")),
+                                         ("with_dial", "With dial", ("none", "dial_scroll", "dial_cycle", "dial_modifier"))):
                 self.split_layout.addWidget(label(title, "section"))
                 editor = ActionEditor(value[part], self.profiles, True, self.default_dial, self.cycle_profile, choices)
                 self.split[part] = editor
@@ -247,7 +254,15 @@ class ActionEditor(QWidget):
     def read(self):
         kind = self.kind.currentData()
         if kind == "hold_dial":
-            return {"kind": kind, "value": {part: editor.read() for part, editor in self.split.items()}}
+            value = {part: editor.read() for part, editor in self.split.items()}
+            if self.separate_dial:
+                if value["with_dial"]["kind"] == "none":
+                    return value["without_dial"]
+                if value["without_dial"]["kind"] == "none":
+                    return value["with_dial"]
+                if value["without_dial"]["kind"] == "profile":
+                    raise ValueError("Switch profile ends this hold. Choose No action under With dial, or choose Hold a key above.")
+            return {"kind": kind, "value": value}
         if kind in ("cycle_next", "cycle_previous", "dial_cycle"):
             value = {"cycle_id": self.cycle.currentData()}
             if kind == "dial_cycle":
@@ -360,7 +375,8 @@ class BindingDialog(QDialog):
                 help_text = {"tap": "Press and release once.", "hold": "Press and keep holding.",
                              "tap_hold": "Tap, release, then press and keep holding."}[gesture]
                 page_layout.addWidget(label(help_text, "muted"))
-                self.editors[gesture] = ActionEditor(binding[gesture], settings["profiles"], gesture != "tap", dial_map(self.profile), self.profile)
+                self.editors[gesture] = ActionEditor(binding[gesture], settings["profiles"], gesture != "tap", dial_map(self.profile), self.profile,
+                                                     separate_dial=gesture != "tap")
                 page_layout.addWidget(self.editors[gesture])
                 page_layout.addStretch()
                 scroll = QScrollArea()
@@ -378,9 +394,9 @@ class BindingDialog(QDialog):
     def commit(self):
         binding = self.profile["bindings"][self.slot]
         binding["name"], binding["input"] = self.name.text().strip(), self.input.text()
-        for gesture, editor in self.editors.items():
-            binding[gesture] = editor.read()
         try:
+            for gesture, editor in self.editors.items():
+                binding[gesture] = editor.read()
             validate(self.result_settings)
             self.accept()
         except (ValueError, KeyError) as exc:

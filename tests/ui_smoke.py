@@ -42,6 +42,10 @@ def main():
             assert dialog.input.text().startswith("F")
             expected = 1 if slot in {"ccw", "cw", "pressed_ccw", "pressed_cw"} else 3
             assert len(dialog.editors) == expected
+            if slot == "right_lower":
+                dialog.findChild(QTabWidget).setCurrentIndex(1)
+                app.processEvents()
+                dialog.grab().save(str(out / "altclipctrl-hold-visible.png"))
             for gesture, editor in dialog.editors.items():
                 assert editor.kind.findData("profile") >= 0
                 assert (editor.kind.findData("hold_key") >= 0) == (gesture != "tap")
