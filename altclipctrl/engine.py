@@ -28,6 +28,7 @@ class Engine:
         self.activity = activity
         self.states = {}
         self.positions = {}
+        self.active_cycles = {}
         self.held_counts = {}
         self.settings = settings
         self.profile_id = settings["active_profile"]
@@ -43,6 +44,7 @@ class Engine:
         self.settings = settings
         self.profile_id = settings["active_profile"]
         self.positions.clear()
+        self.active_cycles.clear()
 
     def switch(self, profile_id):
         if profile_id == self.profile_id:
@@ -253,10 +255,17 @@ class Engine:
             position_key = (self.profile_id, cycle["id"])
             direction = 1 if kind == "cycle_next" else -1
             position = self.positions.get(position_key)
-            position = (0 if direction > 0 else len(tools) - 1) if position is None else (position + direction) % len(tools)
+            previous_cycle = self.active_cycles.get(self.profile_id)
+            if position is None:
+                position = 0 if direction > 0 else len(tools) - 1
+            elif previous_cycle is None or previous_cycle == cycle["id"]:
+                position = (position + direction) % len(tools)
+            # Returning to another list reselects its confirmed item. Only the
+            # following step in that list advances, in either direction.
             keys = chord(tools[position]["shortcut"])
             self.backend.shortcut(keys, set(self.held_counts))
             self.track("+".join(keys), profile=self.profile)
+            self.active_cycles[self.profile_id] = cycle["id"]
         elif kind.startswith("scroll_"):
             direction = 1 if kind == "scroll_up" else -1
             amount = self.settings["scroll_amount"] if scroll_notches is None else scroll_notches

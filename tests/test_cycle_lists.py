@@ -32,11 +32,30 @@ class MultipleCycleTests(unittest.TestCase):
         return action(kind, {"cycle_id": cycle["id"]})
 
     def test_lists_advance_and_wrap_independently(self):
-        for cycle in (self.tools, self.colors, self.tools, self.colors, self.tools, self.colors, self.colors):
+        for cycle in (self.tools, self.tools, self.tools, self.colors, self.colors, self.colors, self.colors, self.tools, self.colors):
             self.engine.execute(self.output("cycle_next", cycle))
-        self.assertEqual([key for event, key in self.backend.events if event == "down"], ["B", "R", "E", "G", "B", "L", "R"])
+        self.assertEqual([key for event, key in self.backend.events if event == "down"], ["B", "E", "B", "R", "G", "L", "R", "B", "R"])
         self.assertEqual(self.engine.positions[(self.profile["id"], self.tools["id"])], 0)
         self.assertEqual(self.engine.positions[(self.profile["id"], self.colors["id"])], 0)
+
+    def test_switching_lists_reselects_saved_item_before_advancing(self):
+        for direction in ("cycle_next", "cycle_previous"):
+            with self.subTest(direction=direction):
+                self.engine = Engine(self.settings, self.backend)
+                self.engine.execute(self.output("cycle_next", self.tools))
+                self.engine.execute(self.output("cycle_next", self.tools))  # Eraser
+                self.engine.execute(self.output("cycle_next", self.colors))
+                self.engine.execute(self.output("cycle_next", self.colors))  # Green
+                self.engine.execute(self.output(direction, self.tools))
+                self.assertEqual(self.backend.events[-2:], [("down", "E"), ("up", "E")])
+                self.assertEqual(self.engine.positions[(self.profile["id"], self.tools["id"])], 1)
+                self.engine.execute(self.output(direction, self.tools))
+                self.assertEqual(self.backend.events[-2:], [("down", "B"), ("up", "B")])
+                self.engine.execute(self.output(direction, self.colors))
+                self.assertEqual(self.backend.events[-2:], [("down", "G"), ("up", "G")])
+                self.engine.execute(self.output(direction, self.colors))
+                key = "L" if direction == "cycle_next" else "R"
+                self.assertEqual(self.backend.events[-2:], [("down", key), ("up", key)])
 
     def test_previous_begins_at_end_of_selected_list(self):
         self.engine.execute(self.output("cycle_previous", self.colors))
@@ -52,7 +71,7 @@ class MultipleCycleTests(unittest.TestCase):
                                   ("F21", True, 2.03), ("F21", False, 2.04), ("F14", False, 2.05),
                                   ("F23", True, 2.06), ("F23", False, 2.07)):
             self.engine.event(signal, down, at)
-        self.assertEqual([key for event, key in self.backend.events if event == "down"], ["B", "L", "R", "E"])
+        self.assertEqual([key for event, key in self.backend.events if event == "down"], ["B", "L", "R", "B"])
         self.assertIn("Tools", self.history[-1]["action"])
         self.assertIn("Colors", self.history[-2]["action"])
 
@@ -162,22 +181,30 @@ class SharedCyclePositionTests(unittest.TestCase):
         self.step(self.b)  # 1
         self.step(self.b)  # 5
         self.assertEqual((self.position(self.a), self.position(self.b)), (4, 1))
-        self.step(self.a, "previous")  # 4 leaves B at 5
+        self.step(self.a, "previous")  # Switch to A restores shared 5
+        self.assertEqual((self.position(self.a), self.position(self.b)), (4, 1))
+        self.step(self.a, "previous")  # Next step selects 4 and leaves B at 5
         self.assertEqual((self.position(self.a), self.position(self.b)), (3, 1))
         self.step(self.a)  # 5
-        self.step(self.b, "previous")  # 1
+        self.step(self.b, "previous")  # Switch back restores 5
+        self.assertEqual((self.position(self.a), self.position(self.b)), (4, 1))
+        self.step(self.b, "previous")  # Next step selects 1
         self.assertEqual((self.position(self.a), self.position(self.b)), (0, 0))
 
     def test_nonmatching_output_keeps_last_confirmed_anchor_in_both_directions(self):
         for direction, expected in (("next", "6"), ("previous", "4")):
             with self.subTest(direction=direction):
                 self.engine.positions.clear()
+                self.engine.active_cycles.clear()
                 for _ in range(3):
                     self.step(self.b)  # 1, 5, F
                 self.assertEqual((self.position(self.a), self.position(self.b)), (4, 2))
                 self.step(self.a, direction)
+                self.assertEqual(self.backend.events[-2:], [("down", "5"), ("up", "5")])
+                self.assertEqual((self.position(self.a), self.position(self.b)), (4, 1))
+                self.step(self.a, direction)
                 self.assertEqual(self.backend.events[-2:], [("down", expected), ("up", expected)])
-                self.assertEqual(self.position(self.b), 2)
+                self.assertEqual(self.position(self.b), 1)
 
     def test_unconfirmed_list_keeps_unknown_anchor_then_starts_at_correct_end(self):
         self.step(self.b, "previous")  # F never confirms A
@@ -239,9 +266,12 @@ class SharedCyclePositionTests(unittest.TestCase):
         self.engine.event("F14", False, 1.1)
         self.engine.event("F13", True, 2)
         self.engine.event("F23", True, 2.01)
+        self.assertEqual(self.backend.events[-2:], [("down", "5"), ("up", "5")])
+        self.assertEqual(self.history[-1]["action"], "Cycle → Tool 5 · 5 · A · via Top left")
+        self.assertEqual(self.position(self.b), 1)
+        self.engine.event("F23", False, 2.02)
+        self.engine.event("F23", True, 2.03)
         self.assertEqual(self.backend.events[-2:], [("down", "6"), ("up", "6")])
-        self.assertEqual(self.history[-1]["action"], "Cycle → Tool 6 · 6 · A · via Top left")
-        self.assertEqual(self.position(self.b), 2)
 
 
 class CycleListUITests(unittest.TestCase):
