@@ -9,6 +9,7 @@ from pathlib import Path
 import tempfile
 import uuid
 import xml.etree.ElementTree as ET
+from .hue import wheel_defaults
 
 SLOTS = (
     ("top_left", "Top left"), ("top_middle", "Top middle"), ("top_right", "Top right"),
@@ -19,8 +20,8 @@ SLOTS = (
 )
 ROTATIONS = {"pressed_ccw", "ccw", "cw", "pressed_cw"}
 DIAL_SLOTS = tuple(slot for slot, _ in SLOTS if slot in ROTATIONS or slot == "neutral")
-DIAL_MODES = {"dial_scroll", "dial_cycle", "dial_modifier"}
-DIRECTIONAL_ACTIONS = {"scroll_up", "scroll_down", "cycle_next", "cycle_previous"}
+DIAL_MODES = {"dial_scroll", "dial_cycle", "dial_modifier", "dial_hue"}
+DIRECTIONAL_ACTIONS = {"scroll_up", "scroll_down", "cycle_next", "cycle_previous", "hue_next", "hue_previous"}
 GESTURES = ("tap", "hold", "tap_hold")
 GESTURE_NAMES = {"tap": "Tap  −", "hold": "Hold  _", "tap_hold": "Tap then hold  −_"}
 ACTIONS = {
@@ -29,6 +30,7 @@ ACTIONS = {
     "scroll_up": "Scroll up", "scroll_down": "Scroll down", "profile": "Switch profile",
     "dial_scroll": "Dial scrolling", "dial_cycle": "Dial cycling", "dial_modifier": "Dial modifier",
     "hold_dial": "Hold + dial",
+    "dial_hue": "Dial hue wheel", "hue_next": "Hue wheel · clockwise", "hue_previous": "Hue wheel · counterclockwise",
 }
 MODIFIERS = ("Ctrl", "Alt", "Shift", "Meta")
 KEYS = [f"F{i}" for i in range(1, 25)] + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") + [
@@ -119,7 +121,7 @@ def validate_output(output, ids, *, held=False, cycles=None):
         output["value"] = normalize(value, held=kind == "hold_key")
     if kind == "profile" and value not in ids:
         raise ValueError("Choose an existing destination profile.")
-    if kind in ("dial_scroll", "dial_cycle"):
+    if kind in ("dial_scroll", "dial_cycle", "dial_hue"):
         if value == "":
             output["value"] = {"reverse": False}
         elif not isinstance(value, dict) or type(value.get("reverse")) is not bool:
@@ -157,7 +159,7 @@ def defaults():
     return {"version": 2, "active_profile": profile["id"], "enabled": True,
             "auto_switch": True, "tap_ms": 100, "hold_ms": 300, "scroll_amount": 1,
             "reverse_scroll": False, "scroll_acceleration": False,
-            "scroll_acceleration_factor": 3.0, "linux_device": "", "profiles": [profile]}
+            "scroll_acceleration_factor": 3.0, "linux_device": "", "hue_wheel": wheel_defaults(), "profiles": [profile]}
 
 
 def validate(settings):
@@ -233,6 +235,21 @@ def validate(settings):
     factor = settings["scroll_acceleration_factor"]
     if type(factor) not in (int, float) or not math.isfinite(factor) or not 1 <= factor <= 10:
         raise ValueError("Scroll acceleration factor must be between 1 and 10.")
+    wheel = settings.setdefault("hue_wheel", wheel_defaults())
+    if not isinstance(wheel, dict):
+        raise ValueError("Choose valid hue wheel settings.")
+    for key, default in wheel_defaults().items():
+        wheel.setdefault(key, default)
+    for key in ("center_x", "center_y", "radius"):
+        if type(wheel[key]) is not int or not (-100000 <= wheel[key] <= 100000):
+            raise ValueError("Use valid screen coordinates for the hue wheel.")
+    if not 5 <= wheel["radius"] <= 5000:
+        raise ValueError("Hue wheel radius must be between 5 and 5000 pixels.")
+    for key, maximum in (("step", 180), ("angle", 360)):
+        if type(wheel[key]) not in (int, float) or not math.isfinite(wheel[key]) or not 0 <= wheel[key] <= maximum or (key == "step" and wheel[key] < .1):
+            raise ValueError("Use a hue step from 0.1 to 180 degrees and a starting angle from 0 to 360.")
+    if not isinstance(wheel["program"], str) or not wheel["program"].strip():
+        raise ValueError("Enter the program name for the hue wheel.")
     return settings
 
 
@@ -246,8 +263,8 @@ def load(path):
                     binding[gesture]["kind"] = "hold_key"
                 if binding.get(gesture, {}).get("kind") in DIRECTIONAL_ACTIONS:
                     kind = binding[gesture]["kind"]
-                    binding[gesture] = action("dial_scroll" if kind.startswith("scroll_") else "dial_cycle",
-                                              {"reverse": kind in ("scroll_down", "cycle_previous")})
+                    binding[gesture] = action("dial_hue" if kind.startswith("hue_") else "dial_scroll" if kind.startswith("scroll_") else "dial_cycle",
+                                              {"reverse": kind in ("scroll_down", "cycle_previous", "hue_previous")})
     return validate(settings)
 
 

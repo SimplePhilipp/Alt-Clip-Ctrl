@@ -246,7 +246,7 @@ class HoldAndDialUITests(unittest.TestCase):
                 editor.split["with_dial"].kind.setCurrentIndex(editor.split["with_dial"].kind.findData("dial_scroll"))
                 editor.split["without_dial"].key.combo.setCurrentText("Shift" if gesture == "tap_hold" else "Space")
                 self.assertEqual(editor.split["without_dial"].kind.count(), 3)
-                self.assertEqual(editor.split["with_dial"].kind.count(), 4)
+                self.assertEqual(editor.split["with_dial"].kind.count(), 5)
             dialog.commit()
             self.assertEqual(dialog.result(), QDialog.DialogCode.Accepted)
             reopened = BindingDialog(None, dialog.result_settings, "top_left")

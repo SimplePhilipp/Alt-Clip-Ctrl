@@ -4,6 +4,7 @@ All times are monotonic seconds supplied by the caller. Repeats never become
 second presses. Own output is excluded by the platform adapter, not timing guesses.
 """
 from dataclasses import dataclass
+from .hue import HueMemory, wheel_defaults, wheel_point
 from .model import ACTIONS, DIAL_MODES, GESTURE_NAMES, ROTATIONS, action, chord, cycle_id, cycle_list
 
 
@@ -23,9 +24,10 @@ class State:
 
 
 class Engine:
-    def __init__(self, settings, backend, switched=lambda _: None, activity=lambda _: None):
+    def __init__(self, settings, backend, switched=lambda _: None, activity=lambda _: None, hue_memory=None):
         self.backend, self.switched = backend, switched
         self.activity = activity
+        self.hue_memory = hue_memory if hue_memory is not None else HueMemory()
         self.states = {}
         self.positions = {}
         self.active_cycles = {}
@@ -205,6 +207,8 @@ class Engine:
         clockwise = slot in ("cw", "pressed_cw")
         reverse = isinstance(mode["value"], dict) and mode["value"].get("reverse", False)
         forward = clockwise != reverse
+        if mode["kind"] == "dial_hue":
+            return action("hue_next" if forward else "hue_previous")
         return action(("scroll_up" if forward else "scroll_down") if mode["kind"] == "dial_scroll" else
                       ("cycle_next" if forward else "cycle_previous"),
                       {"cycle_id": cycle_id(self.profile, mode)} if mode["kind"] == "dial_cycle" else "")
@@ -266,6 +270,12 @@ class Engine:
             self.backend.shortcut(keys, set(self.held_counts))
             self.track("+".join(keys), profile=self.profile)
             self.active_cycles[self.profile_id] = cycle["id"]
+        elif kind in ("hue_next", "hue_previous"):
+            wheel = self.settings.get("hue_wheel", wheel_defaults())
+            angle = (self.hue_memory.angle(wheel) + wheel["step"] * (1 if kind == "hue_next" else -1)) % 360
+            x, y = wheel_point(wheel, angle)
+            if self.backend.click_at(x, y, wheel["program"]):
+                self.hue_memory.remember(wheel, angle)
         elif kind.startswith("scroll_"):
             direction = 1 if kind == "scroll_up" else -1
             amount = self.settings["scroll_amount"] if scroll_notches is None else scroll_notches

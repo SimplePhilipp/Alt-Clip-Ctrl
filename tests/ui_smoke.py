@@ -59,7 +59,7 @@ def main():
                     editor.kind.setCurrentIndex(i)
                     app.processEvents()
                     assert (not editor.key.isHidden()) == (editor.kind.currentData() in {"shortcut", "hold_key"})
-                    assert (not editor.reverse_direction.isHidden()) == (editor.kind.currentData() in {"dial_scroll", "dial_cycle"})
+                    assert (not editor.reverse_direction.isHidden()) == (editor.kind.currentData() in {"dial_scroll", "dial_cycle", "dial_hue"})
             dialog.name.setText("My custom button")
             for editor in dialog.editors.values():
                 editor.kind.setCurrentIndex(editor.kind.findData("none"))

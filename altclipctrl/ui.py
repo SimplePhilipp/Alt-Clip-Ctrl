@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import math
 from collections import deque
 from pathlib import Path
 import sys
@@ -15,6 +16,8 @@ from PySide6.QtWidgets import (
     QScrollArea, QSizePolicy, QSpinBox, QDoubleSpinBox, QStackedWidget, QTabWidget, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
+from .hue import HueMemory, wheel_defaults
+from .pointer import cursor_position
 from .engine import Engine
 from . import __version__
 from .live import LiveInput
@@ -209,7 +212,7 @@ class ActionEditor(QWidget):
         self.split_layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.split_container)
         self.reverse_direction = QCheckBox("Reverse direction")
-        self.reverse_direction.setChecked(bool(output["value"].get("reverse", False)) if output["kind"] in ("dial_scroll", "dial_cycle") and isinstance(output["value"], dict) else False)
+        self.reverse_direction.setChecked(bool(output["value"].get("reverse", False)) if output["kind"] in ("dial_scroll", "dial_cycle", "dial_hue") and isinstance(output["value"], dict) else False)
         layout.addWidget(self.reverse_direction)
         self.hint = label("", "muted", True)
         layout.addWidget(self.hint)
@@ -244,13 +247,13 @@ class ActionEditor(QWidget):
                 "without_dial": {"kind": "hold_key", "value": "Space"}, "with_dial": {"kind": "dial_scroll", "value": {"reverse": False}}}
             self.split = {}
             for part, title, choices in (("without_dial", "Without turning", ("none", "hold_key", "profile") if self.separate_dial else ("none", "hold_key")),
-                                         ("with_dial", "With dial", ("none", "dial_scroll", "dial_cycle", "dial_modifier"))):
+                                         ("with_dial", "With dial", ("none", "dial_scroll", "dial_cycle", "dial_modifier", "dial_hue"))):
                 self.split_layout.addWidget(label(title, "section"))
                 editor = ActionEditor(value[part], self.profiles, True, self.default_dial, self.cycle_profile, choices)
                 self.split[part] = editor
                 self.split_layout.addWidget(editor)
         self.split_container.setVisible(kind == "hold_dial")
-        self.reverse_direction.setVisible(kind in ("dial_scroll", "dial_cycle"))
+        self.reverse_direction.setVisible(kind in ("dial_scroll", "dial_cycle", "dial_hue"))
         self.hint.setText({"none": "This gesture sends nothing.", "shortcut": "Send a key or chord once. Example: Ctrl+Shift+F24.",
             "hold_key": "Keep the key or chord down until you release this button.",
             "hold_dial": "Hold alone for the first action. The first turn releases that output and switches to the dial action until you release the button.",
@@ -261,6 +264,9 @@ class ActionEditor(QWidget):
             "dial_scroll": "While held: clockwise scrolls up and counterclockwise scrolls down, including pressed turns. Amount and reversal are in Options.",
             "dial_cycle": "While held: clockwise moves forward and counterclockwise moves backward through the selected cycle list.",
             "dial_modifier": "Choose temporary outputs for all five dial controls. Release this button to restore the normal dial actions.",
+            "dial_hue": "While held, turn to click around the fixed hue wheel. Set its position and step in Options → Hue wheel.",
+            "hue_next": "Click the next clockwise hue point. Configure the wheel in Options → Hue wheel.",
+            "hue_previous": "Click the next counterclockwise hue point. Configure the wheel in Options → Hue wheel.",
             "profile": "Activate this profile and release any held output."}.get(kind, ""))
 
     def read(self):
@@ -282,7 +288,7 @@ class ActionEditor(QWidget):
             return {"kind": kind, "value": value}
         return {"kind": kind, "value": self.key.text() if kind in ("shortcut", "hold_key") else
                 self.profile.currentData() if kind == "profile" else copy.deepcopy(self.dial_mapping) if kind == "dial_modifier" else
-                {"reverse": self.reverse_direction.isChecked()} if kind == "dial_scroll" else ""}
+                {"reverse": self.reverse_direction.isChecked()} if kind in ("dial_scroll", "dial_hue") else ""}
 
     @property
     def key(self):
@@ -620,10 +626,52 @@ class DeviceMap(QWidget):
         widget.update()
 
 
+class WheelCalibration(QDialog):
+    """Two intercepted clicks: wheel centre, then the current marker on its ring."""
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.center = self.result_wheel = None
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setCursor(Qt.CursorShape.CrossCursor)
+        self.setGeometry(QApplication.primaryScreen().virtualGeometry())
+        self.setWindowTitle("Calibrate hue wheel")
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 25))
+        painter.fillRect(20, 20, self.width()-40, 72, QColor(20, 30, 30, 235))
+        painter.setPen(QColor("white"))
+        painter.setFont(QFont("Segoe UI", 17))
+        message = "Click the centre of your hue wheel" if self.center is None else "Click the CURRENT hue marker on the coloured ring"
+        painter.drawText(QRectF(38, 20, self.width()-76, 72), Qt.AlignmentFlag.AlignVCenter, message + "   ·   Esc to cancel")
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        try:
+            point = cursor_position()
+            if self.center is None:
+                self.center = point
+                self.update()
+            else:
+                dx, dy = point[0]-self.center[0], point[1]-self.center[1]
+                radius = round(math.hypot(dx, dy))
+                if radius < 5:
+                    return
+                self.result_wheel = dict(center_x=self.center[0], center_y=self.center[1], radius=radius,
+                                         angle=math.degrees(math.atan2(dx, -dy)) % 360)
+                self.accept()
+        except Exception as exc:
+            self.reject()
+            error(self.parentWidget(), exc)
+
+
 class OptionsDialog(QDialog):
-    def __init__(self, parent, settings, foreground=""):
+    def __init__(self, parent, settings, foreground="", hue_angle=None):
         super().__init__(parent)
         self.result_settings = copy.deepcopy(settings)
+        self.reset_hue = False
         self.current = settings["active_profile"]
         self.foreground = foreground
         self.loading = False
@@ -776,6 +824,45 @@ class OptionsDialog(QDialog):
         d.addWidget(label("Allow Accessibility and Input Monitoring. F1–F20 use native keycodes. F21–F24 use AppKit function characters and depend on the controller and receiving app; verify those four keys before relying on them.", "muted", True))
         d.addStretch()
         tabs.addTab(device, "Device")
+
+        hue_page = QWidget()
+        hue_layout = QVBoxLayout(hue_page)
+        hue_layout.setContentsMargins(20, 20, 20, 20)
+        hue_layout.setSpacing(12)
+        hue_layout.addWidget(label("Fixed hue wheel", "section"))
+        hue_layout.addWidget(label("Each dial step clicks the next point on the visible wheel and returns your pointer. The last angle is remembered, including after restarting. No colour detection is used.", "muted", True))
+        hue_layout.addWidget(button("Calibrate on screen…", self.calibrate_hue))
+        hue_layout.addWidget(label("The preset matches your 2560 × 1440 layout. Calibrate if display scaling or wheel position differs.", "muted", True))
+        hue = settings.get("hue_wheel", wheel_defaults())
+        self.hue_fields = {}
+        hue_form = QFormLayout()
+        for key, title, low, high in (("center_x", "Centre X", -100000, 100000),
+                                     ("center_y", "Centre Y", -100000, 100000), ("radius", "Ring radius", 5, 5000),
+                                     ("step", "Degrees per notch", .1, 180), ("angle", "Starting angle", 0, 360)):
+            field = QSpinBox() if key in ("center_x", "center_y", "radius") else QDoubleSpinBox()
+            field.setRange(low, high)
+            if isinstance(field, QDoubleSpinBox):
+                field.setDecimals(1)
+                field.setSuffix("°")
+            else:
+                field.setSuffix(" px")
+            field.setValue(hue[key])
+            self.hue_fields[key] = field
+            hue_form.addRow(title, field)
+        self.hue_program = QLineEdit(hue["program"])
+        hue_form.addRow("Target program contains", self.hue_program)
+        hue_layout.addLayout(hue_form)
+        if hue_angle is not None:
+            hue_layout.addWidget(label(f"Remembered angle: {hue_angle:.1f}°", "muted"))
+        self.hue_reset = QCheckBox("Reset remembered position to the starting angle when saved")
+        hue_layout.addWidget(self.hue_reset)
+        hue_layout.addWidget(label("0° is the top; angles increase clockwise. Assign Dial hue wheel under With dial, or assign Hue wheel clockwise/counterclockwise to individual turns. Physical mouse buttons or modifiers pause hue clicks. Linux requires X11 and libXtst.", "muted", True))
+        hue_layout.addStretch()
+        hue_scroll = QScrollArea()
+        hue_scroll.setWidgetResizable(True)
+        hue_scroll.setWidget(hue_page)
+        tabs.addTab(hue_scroll, "Hue wheel")
+
         footer = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         footer.button(QDialogButtonBox.StandardButton.Save).setObjectName("primary")
         footer.accepted.connect(self.commit)
@@ -976,7 +1063,28 @@ class OptionsDialog(QDialog):
         except Exception as exc:
             error(self, exc)
 
+    def calibrate_hue(self):
+        owner = self.parentWidget()
+        self.hide()
+        if owner:
+            owner.hide()
+        picker = WheelCalibration(None)
+        try:
+            if picker.exec():
+                for key, value in picker.result_wheel.items():
+                    self.hue_fields[key].setValue(value)
+                self.hue_reset.setChecked(True)
+        finally:
+            picker.deleteLater()
+            if owner:
+                owner.show()
+            self.show()
+            self.activateWindow()
+
     def commit(self):
+        self.result_settings["hue_wheel"] = {key: field.value() for key, field in self.hue_fields.items()}
+        self.result_settings["hue_wheel"]["program"] = self.hue_program.text().strip()
+        self.reset_hue = self.hue_reset.isChecked()
         self.store_profile()
         self.result_settings.update(auto_switch=self.auto.isChecked(), tap_ms=self.tap.value(), hold_ms=self.hold.value(),
             scroll_amount=self.amount.value(), reverse_scroll=self.reverse.isChecked(),
@@ -1000,6 +1108,7 @@ class MainWindow(QMainWindow):
     def __init__(self, settings_path, *, diagnostic=False):
         super().__init__()
         self.path = Path(settings_path)
+        self.hue_memory = HueMemory(self.path.with_suffix(".hue.json"))
         self.config = defaults()
         self.load_error = ""
         if self.path.exists():
@@ -1156,6 +1265,10 @@ class MainWindow(QMainWindow):
         else:
             self.status.setText("Preview · Controller gestures are shown without sending output")
         self.clock.start()
+        self.hue_clock = QTimer(self)
+        self.hue_clock.setInterval(1000)
+        self.hue_clock.timeout.connect(self.flush_hue_memory)
+        self.hue_clock.start()
         self.refresh_scope()
 
     def capture(self, signal, down, now, injected=False):
@@ -1193,6 +1306,7 @@ class MainWindow(QMainWindow):
                 self.engine = self.live.engine
             else:
                 self.engine = Engine(self.config, self.backend, self.engine_switched, self.record_activity)
+            self.engine.hue_memory = self.hue_memory
             self.backend.start()
             if self.live:
                 self.live.start()
@@ -1671,12 +1785,16 @@ class MainWindow(QMainWindow):
         self.reset()
         self.modal = True
         try:
-            dialog = OptionsDialog(self, self.config, self.last_foreground)
+            dialog = OptionsDialog(self, self.config, self.last_foreground, self.hue_memory.angle(self.config.get("hue_wheel", wheel_defaults())))
             if cycle_lists:
                 dialog.findChild(QTabWidget).setCurrentIndex(1)
             if dialog.exec():
                 device_changed = dialog.result_settings["linux_device"] != self.config["linux_device"]
                 self.persist(dialog.result_settings)
+                if dialog.reset_hue:
+                    wheel = self.config["hue_wheel"]
+                    self.hue_memory.remember(wheel, wheel["angle"])
+                    self.flush_hue_memory()
                 if device_changed and not self.diagnostic:
                     if self.backend:
                         self.backend.stop()
@@ -1700,12 +1818,20 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.failed(str(exc))
 
+    def flush_hue_memory(self):
+        try:
+            self.hue_memory.flush()
+        except OSError as exc:
+            self.status.setText("Could not remember hue position: " + str(exc))
+
     def closeEvent(self, event):
         if not self.leave_inspector():
             event.ignore()
             return
         self.modal = True
         self.clock.stop()
+        self.hue_clock.stop()
+        self.flush_hue_memory()
         self.focus_clock.stop()
         self.reset()
         QApplication.instance().focusChanged.disconnect(self.editor_focus_changed)

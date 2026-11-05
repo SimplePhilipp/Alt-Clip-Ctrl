@@ -41,6 +41,9 @@ class Backend:
             if failure:
                 raise failure
 
+    def click_at(self, x, y, program):
+        raise RuntimeError("Hue wheel clicking is unavailable on this platform.")
+
     def physical_down(self, key):
         return False
 
@@ -73,6 +76,9 @@ class PreviewBackend(Backend):
 
     def scroll(self, amount):
         pass
+
+    def click_at(self, x, y, program):
+        return False
 
 
 class WindowsBackend(Backend):
@@ -172,6 +178,10 @@ class WindowsBackend(Backend):
                 if job is None:
                     return
                 packet, focus, target = job
+                if packet is None:
+                    if not self.output_failed and focus == self.foreground_token():
+                        self.send_hue_click(*target, focus)
+                    continue
                 release = packet.type == 1 and bool(packet.key.flags & 2)
                 if self.output_failed and not release:
                     continue
@@ -211,6 +221,48 @@ class WindowsBackend(Backend):
 
     def scroll(self, amount):
         self.packet(self.Input(type=0, mouse=self.Mouse(data=(amount * 120) & 0xFFFFFFFF, flags=0x800, extra=MARKER)))
+
+    def click_at(self, x, y, program):
+        focus = getattr(self.output_context, "focus", self.foreground_token())
+        if focus != self.foreground_token() or program.casefold() not in self.program_for_window(focus).casefold():
+            return False
+        if any(self.user.GetAsyncKeyState(code) & 0x8000 for code in (1, 2, 4, 5, 6, 16, 17, 18, 91, 92)):
+            return False
+        if self.output_failed or self.output_thread is None:
+            raise OSError("Windows output is not running. Enable the driver to retry.")
+        self.output_queue.put((None, focus, (x, y, program)))
+        return True
+
+    def send_hue_click(self, x, y, program, focus):
+        if focus != self.foreground_token() or program.casefold() not in self.program_for_window(focus, refresh=True).casefold():
+            return False
+        # Leave drawing strokes and modifier-assisted interactions alone.
+        if any(self.user.GetAsyncKeyState(code) & 0x8000 for code in (1, 2, 4, 5, 6, 16, 17, 18, 91, 92)):
+            return False
+        point = self.W.POINT()
+        self.user.GetCursorPos.argtypes = [C.POINTER(self.W.POINT)]
+        if not self.user.GetCursorPos(C.byref(point)):
+            raise OSError("Could not read the pointer position.")
+        left, top, width, height = (self.user.GetSystemMetrics(i) for i in (76, 77, 78, 79))
+        if width < 2 or height < 2 or not (left <= x < left+width and top <= y < top+height):
+            return False
+        self.user.WindowFromPoint.argtypes = [self.W.POINT]
+        self.user.WindowFromPoint.restype = self.W.HWND
+        self.user.GetAncestor.argtypes = [self.W.HWND, self.W.UINT]
+        self.user.GetAncestor.restype = self.W.HWND
+        if self.user.GetAncestor(self.user.WindowFromPoint(self.W.POINT(x, y)), 2) != focus:
+            return False
+        def move(px, py, flags=0):
+            return self.Input(type=0, mouse=self.Mouse(
+                dx=round((px-left)*65535/(width-1)), dy=round((py-top)*65535/(height-1)),
+                flags=0xC001 | flags, extra=MARKER))
+        packets = (self.Input * 4)(move(x, y), move(x, y, 2), move(x, y, 4), move(point.x, point.y))
+        sent = self.user.SendInput(4, packets, C.sizeof(self.Input))
+        if sent != 4:
+            self.user.mouse_event(4, 0, 0, 0, MARKER)
+            self.user.SetCursorPos(point.x, point.y)
+            raise OSError("Windows blocked the hue wheel click.")
+        return True
 
     def foreground(self):
         return self.program_for_window(self.foreground_token(), refresh=True)
@@ -397,6 +449,14 @@ class LinuxBackend(Backend):
         self.virtual.write(self.evdev.ecodes.EV_REL, self.evdev.ecodes.REL_WHEEL, amount)
         self.virtual.syn()
 
+    def click_at(self, x, y, program):
+        if os.environ.get("XDG_SESSION_TYPE") == "wayland":
+            raise RuntimeError("Fixed hue wheel clicks require Linux/X11; Wayland does not expose global pointer control.")
+        if program.casefold() not in self.foreground().casefold():
+            return False
+        from .pointer import x11_click
+        return x11_click(x, y)
+
     def foreground(self):
         # X11/EWMH works without another dependency. Wayland has no universal focus API.
         if os.environ.get("XDG_SESSION_TYPE") == "wayland":
@@ -476,6 +536,27 @@ class MacBackend(Backend):
         event = Q.CGEventCreateScrollWheelEvent(None, Q.kCGScrollEventUnitLine, 1, amount)
         Q.CGEventSetIntegerValueField(event, Q.kCGEventSourceUserData, MARKER)
         Q.CGEventPost(Q.kCGHIDEventTap, event)
+
+    def click_at(self, x, y, program):
+        if program.casefold() not in self.foreground().casefold():
+            return False
+        Q = self.Q
+        if any(Q.CGEventSourceButtonState(Q.kCGEventSourceStateCombinedSessionState, button) for button in range(3)):
+            return False
+        flags = Q.CGEventSourceFlagsState(Q.kCGEventSourceStateCombinedSessionState)
+        if flags & (Q.kCGEventFlagMaskControl | Q.kCGEventFlagMaskAlternate | Q.kCGEventFlagMaskShift | Q.kCGEventFlagMaskCommand):
+            return False
+        previous = Q.CGEventGetLocation(Q.CGEventCreate(None))
+        try:
+            for kind in (Q.kCGEventMouseMoved, Q.kCGEventLeftMouseDown, Q.kCGEventLeftMouseUp):
+                event = Q.CGEventCreateMouseEvent(None, kind, (x, y), Q.kCGMouseButtonLeft)
+                Q.CGEventSetIntegerValueField(event, Q.kCGEventSourceUserData, MARKER)
+                Q.CGEventPost(Q.kCGHIDEventTap, event)
+        finally:
+            event = Q.CGEventCreateMouseEvent(None, Q.kCGEventMouseMoved, previous, Q.kCGMouseButtonLeft)
+            Q.CGEventSetIntegerValueField(event, Q.kCGEventSourceUserData, MARKER)
+            Q.CGEventPost(Q.kCGHIDEventTap, event)
+        return True
 
     def foreground(self):
         from AppKit import NSWorkspace

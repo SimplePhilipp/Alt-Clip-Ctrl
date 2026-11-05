@@ -165,3 +165,17 @@ Choose a control in the central schematic to edit it in the right panel. The top
 The workspace opens without a selected control. Clicking a control to edit it marks it teal. Physical button presses and dial signals light their controls grey; on release, an edited control returns to teal. Hovering alone does not select a control.
 
 When switching between cycle lists, the first cycle action reselects the destination list's remembered item without moving its pointer. The next action in that list advances normally, in either direction. This applies to cycle buttons, held dial cycling and temporary dial mappings. A list with no remembered item starts at the first item for Next or the last for Previous. Matching shortcuts still synchronize shared items across lists.
+
+## Fixed hue wheel (2.4)
+
+Open **Options → Hue wheel**. The starting preset uses the supplied 2560 × 1440 layout: centre X 123, Y 1328, ring radius 75 pixels, starting angle 240°, and 3° per notch. Coordinates use the native desktop coordinate system. The target program name must contain `clipstudiopaint`; it is editable for other applications.
+
+For an exact setup, choose **Calibrate on screen**. The app hides while a transparent overlay intercepts two clicks: first the wheel centre, then the current hue marker on the coloured ring. These calibration clicks are not forwarded to Clip. Escape cancels calibration. Save the Options dialog to apply it. Calibration records the radius and starting angle. Zero degrees is at the top and angles increase clockwise.
+
+Click a controller button, choose Hold or Tap then hold, and set **With dial → Dial hue wheel**. Reverse direction is optional. Each notch clicks the next ring point and returns the pointer. Alternatively, assign **Hue wheel · clockwise/counterclockwise** directly to individual dial turns or temporary dial mappings. The without-turning action remains independent.
+
+The last angle is kept through release, profile changes and restarts in a small `.hue.json` companion file beside the settings. It is saved periodically and on normal exit. The reset checkbox in Hue wheel Options starts from the displayed starting angle again. There is no image analysis or automatic synchronization after an eyedropper or manual colour change. Keep the wheel visible in its calibrated position; recalibrate after moving it or changing display scaling.
+
+Clicks are restricted to the configured target program while it is foreground. On Windows, the calibrated point must belong to that foreground window; an overlapping window prevents a click. Held mouse buttons or keyboard modifiers suppress clicks. Windows uses its existing output worker and virtual desktop coordinates. macOS uses Quartz, and Linux/X11 uses XTest (`libX11` and `libXtst`); Wayland is unsupported for absolute hue wheel clicks. Preview mode shows actions without clicking or changing the saved angle. Linux and macOS hardware behavior still needs validation.
+
+The Windows foreground guard and native packet coordinates are covered by tests. The opt-in `python -m tests.hue_native_smoke --report test-results/hue-native.json` uses only its own receiver and refuses to click if Windows blocks its foreground activation.
