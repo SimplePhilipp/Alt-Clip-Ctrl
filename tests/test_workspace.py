@@ -103,22 +103,65 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(load(window.path)['profiles'][0]['bindings']['right_lower']['hold']['value']['cw'], action('shortcut', 'F24'))
 
     def test_physical_press_is_grey_and_release_restores_selection(self):
+        from altclipctrl.ui import THEME
         window = self.window
-        for slot in ('right_lower', 'top_left'):
-            window.edit_binding(slot)
-            widget = window.map.buttons[slot]
-            def fill():
-                image = widget.grab().toImage()
-                return image.pixelColor(image.width() // 2, image.height() // 2).name()
-            self.assertEqual(fill(), '#168b91')
-            window.map.set_held(widget.signal, True)
-            self.assertEqual(fill(), '#d1d5d8')
-            window.map.set_held(widget.signal, False)
-            window.map.unpulse(widget)
-            self.assertEqual(fill(), '#168b91')
-            self.assertTrue(widget.selected)
-        other = window.map.buttons['left_lower']
-        window.map.set_held(other.signal, True)
-        image = other.grab().toImage()
-        self.assertEqual(image.pixelColor(image.width() // 2, image.height() // 2).name(), '#d1d5d8')
-        self.assertFalse(other.selected)
+        for theme in ('dark', 'light'):
+            window.apply_theme(theme, remember=False)
+            accent, pressed = THEME['accent'], THEME['pressed']
+            for slot in ('right_lower', 'top_left'):
+                window.edit_binding(slot)
+                widget = window.map.buttons[slot]
+                def fill():
+                    image = widget.grab().toImage()
+                    return image.pixelColor(image.width() // 2, image.height() // 2).name()
+                self.assertEqual(fill(), accent)
+                window.map.set_held(widget.signal, True)
+                self.assertEqual(fill(), pressed)
+                window.map.set_held(widget.signal, False)
+                window.map.unpulse(widget)
+                self.assertEqual(fill(), accent)
+                self.assertTrue(widget.selected)
+            other = window.map.buttons['left_lower']
+            window.map.set_held(other.signal, True)
+            image = other.grab().toImage()
+            self.assertEqual(image.pixelColor(image.width() // 2, image.height() // 2).name(), pressed)
+            self.assertFalse(other.selected)
+            window.map.set_held(other.signal, False)
+            window.map.unpulse(other)
+        window.apply_theme('dark', remember=False)
+
+    def test_inspector_fits_without_scrolling(self):
+        """Every gesture page, including nested dial modifiers, fits the window's minimum height."""
+        from PySide6.QtWidgets import QScrollArea, QTabWidget
+        window = self.window
+        window.resize(window.minimumSize())
+        window.show()
+        self.app.processEvents()
+        self.assertEqual(window.findChildren(QScrollArea), [])
+        editor = window.inspector
+        for gesture in ('hold', 'tap_hold'):
+            split = editor.editors[gesture].split['with_dial']
+            split.kind.setCurrentIndex(split.kind.findData('dial_modifier'))
+            for slot in ('cw', 'neutral'):
+                split.dial_controls.select(slot)
+                output = split.dial_controls.editors[slot]
+                output.kind.setCurrentIndex(output.kind.findData('cycle_next'))
+        tabs = editor.findChild(QTabWidget)
+        for index in range(tabs.count()):
+            tabs.setCurrentIndex(index)
+            self.app.processEvents()
+            needed = editor.minimumSizeHint().height()
+            self.assertLessEqual(needed, window.inspector_area.height(), f'tab {index} needs {needed}px')
+        window.hide()
+
+    def test_theme_choice_is_remembered_per_settings_file(self):
+        window = self.window
+        window.toggle_theme()
+        self.assertTrue(window.preferences_path.exists())
+        again = MainWindow(window.path, diagnostic=True)
+        try:
+            from altclipctrl.ui import THEME
+            self.assertEqual(THEME['name'], 'light')
+        finally:
+            again.close()
+            window.apply_theme('dark')
