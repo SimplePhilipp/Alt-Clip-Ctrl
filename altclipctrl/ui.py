@@ -7,8 +7,10 @@ from pathlib import Path
 import sys
 import time
 
-from PySide6.QtCore import Qt, QRectF, Signal, QTimer, QObject, QEvent
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QKeySequence
+import json
+
+from PySide6.QtCore import Qt, QPointF, QRectF, QSize, Signal, QTimer, QObject, QEvent
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QKeySequence, QPixmap, QShortcut, QIcon
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
     QFormLayout, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QInputDialog,
@@ -25,41 +27,120 @@ from .assignment import QuickAssignment
 from .model import ACTIONS, DIAL_MODES, DIAL_SLOTS, GESTURES, GESTURE_NAMES, KEYS, MODIFIERS, ROTATIONS, SLOTS, allowed_actions, defaults, dial_map, import_legacy, load, new_cycle_list, new_profile, normalize, references_cycle, references_profile, save, validate, validate_output
 from .platforms import PreviewBackend, WindowsBackend, create_backend
 
-STYLE = """
-QWidget { background: #ffffff; color: #161616; font-family: 'Segoe UI', 'Helvetica Neue', sans-serif; font-size: 13px; }
-QMainWindow, QDialog { background: #ffffff; }
-QLabel#muted { color: #767676; }
-QLabel#eyebrow { color: #777777; font-size: 10px; font-weight: 600; letter-spacing: 2px; }
-QLabel#title { font-size: 30px; font-weight: 600; letter-spacing: -1px; }
-QLabel#section { font-size: 17px; font-weight: 600; }
-QPushButton { border: 1px solid #d4d4d4; border-radius: 7px; padding: 8px 13px; min-height: 18px; background: white; }
-QPushButton:hover { background: #f1f1f1; border-color: #161616; }
-QPushButton:pressed { background: #e5e5e5; }
-QPushButton:disabled { color: #999; border-color: #eee; }
-QPushButton#primary { background: #168b91; border-color: #168b91; color: white; font-weight: 600; }
-QPushButton#primary:hover { background: #11767c; }
-QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QPlainTextEdit { border: 1px solid #d4d4d4; border-radius: 6px; padding: 7px; selection-background-color: #242424; selection-color: white; }
-QComboBox { min-height: 20px; padding-right: 24px; }
-QComboBox::drop-down { border: none; width: 24px; }
+ASSETS = Path(__file__).parent / "assets"
+
+# Two palettes share one stylesheet template. Custom-painted widgets read the
+# live palette from THEME, so switching themes only needs a restyle + repaint.
+THEMES = {
+    "dark": dict(
+        bg="#0e1113", panel="#14181b", raised="#1b2024", field="#101316", hover="#232a2f",
+        line="#262d32", strong="#3a434a", text="#e7ecee", muted="#98a3a9",
+        accent="#33b8bf", accent_hover="#4cc6cc", accent_ink="#06282a", accent_soft="#15292b",
+        pressed="#4a545b", pressed_text="#ffffff", ok="#4cc38a", warn="#e0a84a", record="#e5534b",
+        tooltip="#e7ecee", tooltip_text="#0e1113", chevron="chevron-light.png"),
+    "light": dict(
+        bg="#f3f5f6", panel="#ffffff", raised="#f4f6f7", field="#ffffff", hover="#eaeef0",
+        line="#e2e7e9", strong="#c5cdd1", text="#14181a", muted="#5b666c",
+        accent="#168b91", accent_hover="#11767c", accent_ink="#ffffff", accent_soft="#e4f3f3",
+        pressed="#d1d5d8", pressed_text="#252b2e", ok="#1f8a55", warn="#a8661a", record="#d93f36",
+        tooltip="#161616", tooltip_text="#ffffff", chevron="chevron.png"),
+}
+THEME = dict(THEMES["dark"], name="dark")
+
+STYLE_TEMPLATE = """
+QWidget { background: transparent; color: @text; font-family: 'Segoe UI Variable Text', 'Segoe UI', 'Helvetica Neue', sans-serif; font-size: 13px; }
+QMainWindow, QDialog, QMessageBox, QInputDialog { background: @bg; }
+QLabel#muted { color: @muted; }
+QLabel#eyebrow { color: @muted; font-size: 10px; font-weight: 600; letter-spacing: 1.5px; }
+QLabel#title { font-size: 26px; font-weight: 600; letter-spacing: -0.5px; }
+QLabel#section { font-size: 15px; font-weight: 600; }
+QLabel#heading { font-size: 19px; font-weight: 600; letter-spacing: -0.3px; }
+QLabel#brand { font-size: 15px; font-weight: 700; }
+QLabel#field { color: @muted; font-size: 12px; }
+QLabel#chip { background: @raised; color: @muted; border-radius: 12px; padding: 4px 11px; font-size: 12px; }
+QLabel#unsaved { color: @warn; font-size: 12px; font-weight: 600; }
+QLabel#saved { color: @ok; font-size: 12px; }
+QPushButton { border: 1px solid @line; border-radius: 8px; padding: 7px 13px; min-height: 18px; background: @raised; color: @text; }
+QPushButton:hover { background: @hover; border-color: @strong; }
+QPushButton:pressed { background: @line; }
+QPushButton:disabled { color: @muted; background: transparent; border-color: @line; }
+QPushButton#primary { background: @accent; border-color: @accent; color: @accent_ink; font-weight: 600; }
+QPushButton#primary:hover { background: @accent_hover; border-color: @accent_hover; }
+QPushButton#primary:disabled { background: @raised; border-color: @line; color: @muted; font-weight: 600; }
+QPushButton#ghost { background: transparent; }
+QPushButton#ghost:hover { background: @hover; }
+QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox, QPlainTextEdit { background: @field; color: @text; border: 1px solid @line; border-radius: 8px; padding: 6px 8px; selection-background-color: @accent; selection-color: @accent_ink; }
+QComboBox:hover, QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover, QPlainTextEdit:hover { border-color: @strong; }
+QComboBox:focus, QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QPlainTextEdit:focus { border-color: @accent; }
+QComboBox:disabled, QLineEdit:disabled { color: @muted; }
+QComboBox { min-height: 20px; padding-right: 26px; }
+QComboBox::drop-down { border: none; width: 26px; }
 QComboBox::down-arrow { image: url('CHEVRON'); width: 12px; height: 8px; }
-QComboBox QAbstractItemView { selection-background-color: #eee; selection-color: #111; padding: 4px; }
+QAbstractSpinBox { padding-right: 24px; }
+QAbstractSpinBox::up-button, QAbstractSpinBox::down-button { subcontrol-origin: border; width: 22px; border: none; background: transparent; }
+QAbstractSpinBox::up-button { subcontrol-position: top right; margin: 3px 3px 0 0; }
+QAbstractSpinBox::down-button { subcontrol-position: bottom right; margin: 0 3px 3px 0; }
+QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover { background: @hover; border-radius: 4px; }
+QAbstractSpinBox::up-arrow { image: url('CHEVUP'); width: 9px; height: 6px; }
+QAbstractSpinBox::down-arrow { image: url('CHEVRON'); width: 9px; height: 6px; }
+QComboBox QAbstractItemView { background: @panel; color: @text; border: 1px solid @line; selection-background-color: @accent_soft; selection-color: @text; padding: 4px; outline: 0; }
 QCheckBox { spacing: 8px; }
-QCheckBox::indicator { width: 16px; height: 16px; border: 1px solid #aaa; border-radius: 4px; }
-QCheckBox::indicator:checked { background: #242424; border: 1px solid #242424; image: none; }
-QTabWidget::pane { border: 1px solid #dedede; border-radius: 7px; top: -1px; }
-QTabBar::tab { padding: 10px 9px; color: #777; border-bottom: 2px solid transparent; }
-QTabBar::tab:selected { color: #126f75; background: #e4f3f3; border-bottom: 2px solid #168b91; }
-QTableWidget { border: 1px solid #ddd; gridline-color: #eee; selection-background-color: #eee; selection-color: #111; }
-QHeaderView::section { background: #f6f6f6; border: none; border-bottom: 1px solid #ddd; padding: 8px; font-weight: 600; }
-QToolTip { background: #161616; color: #fff; border: none; padding: 8px; }
+QCheckBox::indicator { width: 16px; height: 16px; border: 1px solid @strong; border-radius: 4px; background: @field; }
+QCheckBox::indicator:checked { background: @accent; border: 1px solid @accent; image: none; }
+QTabWidget::pane { border: 1px solid @line; border-radius: 10px; top: -1px; background: @panel; }
+QTabWidget#gestures::pane { border: none; border-top: 1px solid @line; border-radius: 0; background: transparent; }
+QTabBar { qproperty-drawBase: 0; }
+QTabBar::tab { padding: 9px 12px; color: @muted; background: transparent; border: none; border-bottom: 2px solid transparent; }
+QTabBar::tab:hover { color: @text; }
+QTabBar::tab:selected { color: @text; font-weight: 600; border-bottom: 2px solid @accent; }
+QTableWidget { background: @field; color: @text; border: 1px solid @line; border-radius: 8px; gridline-color: @line; selection-background-color: @accent_soft; selection-color: @text; }
+QHeaderView::section { background: @raised; color: @text; border: none; border-bottom: 1px solid @line; padding: 8px; font-weight: 600; }
+QTableCornerButton::section { background: @raised; border: none; }
+QToolTip { background: @tooltip; color: @tooltip_text; border: none; padding: 7px 9px; border-radius: 6px; }
 QScrollArea { border: none; }
-QListWidget { border: none; outline: none; background: white; }
-QListWidget::item { border: 1px solid #e8eeee; border-radius: 9px; margin-bottom: 8px; padding: 14px 10px; }
-QListWidget::item:selected { background: #e4f3f3; color: #111; }
-QWidget#historyPanel { background: #f7f9f9; border-right: 1px solid #e3e9e9; }
-QWidget#historyPanel QLabel, QWidget#historyPanel QListWidget { background: transparent; }
-QWidget#inspectorPanel { border-left: 1px solid #e3e9e9; }
-""".replace("CHEVRON", (Path(__file__).parent / "assets" / "chevron.svg").as_posix())
+QScrollBar:vertical { background: transparent; width: 10px; margin: 2px; }
+QScrollBar:horizontal { background: transparent; height: 10px; margin: 2px; }
+QScrollBar::handle { background: @strong; border-radius: 3px; min-height: 28px; min-width: 28px; }
+QScrollBar::add-line, QScrollBar::sub-line, QScrollBar::add-page, QScrollBar::sub-page { background: none; border: none; width: 0; height: 0; }
+QListWidget { border: none; outline: none; }
+QListWidget::item { background: @raised; color: @text; border: 1px solid @line; border-radius: 10px; margin-bottom: 8px; padding: 10px; }
+QListWidget::item:selected { background: @accent_soft; border-color: @accent; color: @text; }
+QFrame#topBar { background: @panel; border: none; border-bottom: 1px solid @line; }
+QFrame#historyPanel { background: @panel; border: none; border-right: 1px solid @line; }
+QFrame#inspectorPanel { background: @panel; border: none; border-left: 1px solid @line; }
+QFrame#inspectorHeader { border: none; border-bottom: 1px solid @line; }
+QFrame#statusBar { background: @panel; border: none; border-top: 1px solid @line; }
+QFrame#assignmentPanel { background: @accent_soft; border: 1px solid @accent; border-radius: 12px; }
+QFrame#card { background: @raised; border: 1px solid @line; border-radius: 10px; }
+QFrame#separator { background: @line; border: none; min-height: 1px; max-height: 1px; }
+QDialog QTabWidget::pane { background: @panel; }
+QFrame#inspectorPanel QDialog { background: @panel; }
+"""
+
+
+def build_style(name=None):
+    palette = THEMES[name] if name else THEME
+    style = STYLE_TEMPLATE.replace("CHEVRON", (ASSETS / palette["chevron"]).as_posix())
+    style = style.replace("CHEVUP", (ASSETS / palette["chevron"].replace("chevron", "chevron-up")).as_posix())
+    # Longest keys first so @accent_hover is not consumed by @accent.
+    for key in sorted(palette, key=len, reverse=True):
+        style = style.replace("@" + key, palette[key])
+    return style
+
+
+def set_theme(name):
+    THEME.clear()
+    THEME.update(THEMES[name], name=name)
+    app = QApplication.instance()
+    style = build_style()
+    if app is not None and app.styleSheet() != style:
+        # Restyling re-polishes every widget, so only do it on a real change.
+        app.setStyleSheet(style)
+        for widget in app.allWidgets():
+            QWidget.update(widget)
+
+
+STYLE = build_style("dark")
 
 
 def label(text, name=None, wrap=False):
@@ -82,9 +163,170 @@ def button(text, callback, primary=False):
 
 def line():
     widget = QFrame()
-    widget.setFrameShape(QFrame.Shape.HLine)
-    widget.setStyleSheet("color: #e7e7e7; background: #e7e7e7; max-height: 1px; border: 0;")
+    widget.setObjectName("separator")
+    widget.setFixedHeight(1)
     return widget
+
+
+def field(caption, widget):
+    """A small caption above an input, as one widget."""
+    box = QWidget()
+    column = QVBoxLayout(box)
+    column.setContentsMargins(0, 0, 0, 0)
+    column.setSpacing(5)
+    column.addWidget(label(caption, "field"))
+    column.addWidget(widget)
+    return box
+
+
+def rounded_path(rect, tl, tr, br, bl):
+    path = QPainterPath()
+    x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
+    path.moveTo(x + tl, y)
+    path.lineTo(x + w - tr, y)
+    path.quadTo(x + w, y, x + w, y + tr)
+    path.lineTo(x + w, y + h - br)
+    path.quadTo(x + w, y + h, x + w - br, y + h)
+    path.lineTo(x + bl, y + h)
+    path.quadTo(x, y + h, x, y + h - bl)
+    path.lineTo(x, y + tl)
+    path.quadTo(x, y, x + tl, y)
+    path.closeSubpath()
+    return path
+
+
+class Switch(QCheckBox):
+    """A checkbox drawn as a sliding toggle; same signals and API as QCheckBox."""
+    def __init__(self, text=""):
+        super().__init__(text)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def sizeHint(self):
+        metrics = self.fontMetrics()
+        return QSize(46 + metrics.horizontalAdvance(self.text()), 34)
+
+    def minimumSizeHint(self):
+        return self.sizeHint()
+
+    def hitButton(self, pos):
+        return self.rect().contains(pos)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        on, enabled = self.isChecked(), self.isEnabled()
+        track = QRectF(2, (self.height() - 20) / 2, 34, 20)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(THEME["accent"] if on and enabled else THEME["strong"]))
+        painter.drawRoundedRect(track, 10, 10)
+        painter.setBrush(QColor("#ffffff"))
+        painter.drawEllipse(QRectF(track.x() + (17 if on else 3), track.y() + 3, 14, 14))
+        painter.setPen(QColor(THEME["text"] if enabled else THEME["muted"]))
+        painter.setFont(self.font())
+        painter.drawText(QRectF(44, 0, self.width() - 44, self.height()), Qt.AlignmentFlag.AlignVCenter, self.text())
+        if self.hasFocus():
+            painter.setPen(QPen(QColor(THEME["accent"]), 1.5))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(track.adjusted(-2, -2, 2, 2), 12, 12)
+
+
+class ThemeButton(QPushButton):
+    """Sun in dark mode (switch to light), moon in light mode (switch to dark)."""
+    def __init__(self, callback):
+        super().__init__()
+        self.setFixedSize(36, 34)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.clicked.connect(callback)
+        self.refresh()
+
+    def refresh(self):
+        dark = THEME["name"] == "dark"
+        self.setToolTip("Switch to light mode" if dark else "Switch to dark mode")
+        self.setAccessibleName(self.toolTip())
+        self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        c = QRectF(self.rect()).center()
+        pen = QPen(QColor(THEME["text"]), 1.7)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        if THEME["name"] == "dark":
+            painter.drawEllipse(c, 3.8, 3.8)
+            for i in range(8):
+                angle = math.radians(i * 45)
+                painter.drawLine(QPointF(c.x() + 6.3 * math.cos(angle), c.y() + 6.3 * math.sin(angle)),
+                                 QPointF(c.x() + 8.3 * math.cos(angle), c.y() + 8.3 * math.sin(angle)))
+        else:
+            moon = QPainterPath()
+            moon.addEllipse(c, 7, 7)
+            bite = QPainterPath()
+            bite.addEllipse(QPointF(c.x() + 4, c.y() - 3.2), 6, 6)
+            painter.drawPath(moon.subtracted(bite))
+
+
+class StatusLabel(QLabel):
+    """Status text with a coloured state dot; the dot follows the text."""
+    def __init__(self, text=""):
+        super().__init__(text)
+        self.setObjectName("muted")
+        self.setIndent(16)
+        # Long errors elide instead of widening the window.
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def setText(self, text):
+        super().setText(text)
+        self.setToolTip(text)
+
+    def state_color(self):
+        text = self.text()
+        if text.startswith(("Input paused", "Paused", "Could not", "Quick assign", "Profile changed")):
+            return THEME["warn"]
+        if text.startswith("Preview"):
+            return THEME["accent"]
+        return THEME["ok"]
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(self.state_color()))
+        painter.drawEllipse(QRectF(0, self.height() / 2 - 3.5, 7, 7))
+        painter.end()
+        super().paintEvent(event)
+
+
+class Legend(QWidget):
+    ITEMS = (("accent", "Selected", False), ("pressed", "Pressed now", False), ("muted", "Not set", True))
+
+    def __init__(self):
+        super().__init__()
+        self.setFixedHeight(20)
+        self.setMinimumWidth(320)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setFont(self.font())
+        metrics = self.fontMetrics()
+        widths = [16 + metrics.horizontalAdvance(text) for _, text, _ in self.ITEMS]
+        x = (self.width() - sum(widths) - 18 * (len(widths) - 1)) / 2
+        for (key, text, dashed), width in zip(self.ITEMS, widths):
+            box = QRectF(x, self.height() / 2 - 5, 10, 10)
+            if dashed:
+                pen = QPen(QColor(THEME[key]), 1.3, Qt.PenStyle.DashLine)
+                painter.setPen(pen)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+            else:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(THEME[key]))
+            painter.drawRoundedRect(box, 3, 3)
+            painter.setPen(QColor(THEME["muted"]))
+            painter.drawText(QRectF(x + 16, 0, width, self.height()), Qt.AlignmentFlag.AlignVCenter, text)
+            x += width + 18
 
 
 def error(parent, exc):
@@ -196,6 +438,7 @@ class ActionEditor(QWidget):
         self.split = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
         self.kind = QComboBox()
         for key, text in allowed_actions(allow_hold).items():
             if choices is None or key in choices:
@@ -211,7 +454,7 @@ class ActionEditor(QWidget):
         self.split_layout = QVBoxLayout(self.split_container)
         self.split_layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.split_container)
-        self.reverse_direction = QCheckBox("Reverse direction")
+        self.reverse_direction = Switch("Reverse direction")
         self.reverse_direction.setChecked(bool(output["value"].get("reverse", False)) if output["kind"] in ("dial_scroll", "dial_cycle", "dial_hue") and isinstance(output["value"], dict) else False)
         layout.addWidget(self.reverse_direction)
         self.hint = label("", "muted", True)
@@ -364,11 +607,13 @@ class DialControlsEditor(QWidget):
         row = QHBoxLayout()
         row.setSpacing(7)
         self.buttons = {}
-        symbols = ("↓ ↶", "↶", "↓", "↷", "↓ ↷")
-        for slot, symbol in zip(DIAL_SLOTS, symbols):
+        symbols = ("↺", "↺", "●", "↻", "↻")
+        captions = ("PRESS", "TURN", "PRESS", "TURN", "PRESS")
+        for slot, symbol, caption in zip(DIAL_SLOTS, symbols, captions):
             widget = DeviceButton(slot)
-            widget.number = symbol
-            widget.setMinimumSize(56, 48)
+            widget.number, widget.caption = symbol, caption
+            widget.setMinimumSize(56, 52)
+            widget.setMaximumHeight(52)
             widget.setAccessibleName(dict(SLOTS)[slot])
             widget.clicked.connect(lambda checked=False, s=slot: self.select(s))
             self.buttons[slot] = widget
@@ -419,35 +664,78 @@ class BindingDialog(QDialog):
         self.profile = next(p for p in self.result_settings["profiles"] if p["id"] == settings["active_profile"])
         binding = self.profile["bindings"][slot]
         self.setWindowTitle("Configure · " + binding["name"])
-        self.resize(640, 840 if slot not in ROTATIONS else 450)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20) if embedded else layout.setContentsMargins(28, 26, 28, 24)
-        layout.setSpacing(15)
-        layout.addWidget(label("BUTTON MAPPING" if slot not in ROTATIONS else "DIAL MAPPING", "eyebrow"))
-        layout.addWidget(label(binding["name"], "section" if embedded else "title"))
-        layout.addWidget(label("Profile · " + self.profile["name"], "muted"))
-        form = QFormLayout()
-        if embedded:
-            form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
-        form.setSpacing(12)
+        self.resize(520, 720 if slot not in ROTATIONS else 440)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Header: what is being edited, and the save controls, always in view.
+        header = QFrame()
+        header.setObjectName("inspectorHeader")
+        head = QVBoxLayout(header)
+        head.setContentsMargins(20, 14, 20, 14)
+        head.setSpacing(8)
+        kind = "BUTTON MAPPING" if slot not in ROTATIONS else "DIAL MAPPING"
+        eyebrow = label(kind + "  ·  " + self.profile["name"].upper(), "eyebrow")
+        eyebrow.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        head.addWidget(eyebrow)
+        top = QHBoxLayout()
+        top.setSpacing(8)
+        self.heading = label(binding["name"], "heading")
+        # The title gives way to the save controls, never the other way round.
+        self.heading.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        top.addWidget(self.heading, 1)
+        self.unsaved = label("●  Unsaved", "unsaved")
+        self.saved = label("✓  Saved", "saved")
+        top.addWidget(self.unsaved, 0, Qt.AlignmentFlag.AlignVCenter)
+        top.addWidget(self.saved, 0, Qt.AlignmentFlag.AlignVCenter)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Discard)
+        self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
+        self.save_button.setObjectName("primary")
+        self.save_button.setText("Save")
+        self.save_button.setToolTip("Save this control (Ctrl+S)")
+        self.discard_button = buttons.button(QDialogButtonBox.StandardButton.Discard)
+        self.discard_button.setObjectName("ghost")
+        self.discard_button.setToolTip("Undo the changes to this control")
+        self.save_button.setMinimumWidth(68)
+        self.discard_button.setMinimumWidth(80)
+        buttons.accepted.connect(self.commit)
+        self.discard_button.clicked.connect(self.reject)
+        top.addWidget(buttons, 0, Qt.AlignmentFlag.AlignVCenter)
+        head.addLayout(top)
+        head.addSpacing(4)
+        identity = QGridLayout()
+        identity.setHorizontalSpacing(12)
+        identity.setContentsMargins(0, 0, 0, 0)
         self.name = QLineEdit(binding["name"])
+        self.name.textChanged.connect(lambda text: self.heading.setText(text.strip() or dict(SLOTS)[slot]))
         self.input = KeyEditor(binding["input"], single=True)
-        form.addRow("Button name", self.name)
-        form.addRow("Device input", self.input)
-        layout.addLayout(form)
-        layout.addWidget(label("Set your controller to send this single key. The name appears when you hover over its control.", "muted", True))
-        layout.addWidget(line())
+        self.input.setToolTip("Set your controller to send this single key. The name appears when you hover over its control.")
+        identity.addWidget(field("Button name", self.name), 0, 0)
+        identity.addWidget(field("Device input", self.input), 0, 1)
+        identity.setColumnStretch(0, 1)
+        identity.setColumnStretch(1, 1)
+        head.addLayout(identity)
+        outer.addWidget(header)
+
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(20, 14, 20, 16)
+        layout.setSpacing(10)
         self.editors = {}
         if slot in ROTATIONS:
             layout.addWidget(label("On each turn", "section"))
+            layout.addWidget(label("Runs on every notch of the dial in this direction.", "muted"))
             self.editors["tap"] = ActionEditor(binding["tap"], settings["profiles"], False, active_profile=self.profile)
             layout.addWidget(self.editors["tap"])
         else:
             tabs = QTabWidget()
+            tabs.setObjectName("gestures")
             for gesture in GESTURES:
                 page = QWidget()
                 page_layout = QVBoxLayout(page)
-                page_layout.setContentsMargins(12, 14, 12, 12)
+                page_layout.setContentsMargins(2, 12, 2, 4)
+                page_layout.setSpacing(10)
                 help_text = {"tap": "Press and release once.", "hold": "Press and keep holding.",
                              "tap_hold": "Tap, release, then press and keep holding."}[gesture]
                 page_layout.addWidget(label(help_text, "muted"))
@@ -455,21 +743,25 @@ class BindingDialog(QDialog):
                                                      separate_dial=gesture != "tap")
                 page_layout.addWidget(self.editors[gesture])
                 page_layout.addStretch()
-                scroll = QScrollArea()
-                scroll.setWidgetResizable(True)
-                scroll.setWidget(page)
-                tabs.addTab(scroll, GESTURE_NAMES[gesture])
+                tabs.addTab(page, GESTURE_NAMES[gesture])
             layout.addWidget(tabs, 1)
-            if embedded:
-                tabs.setMinimumHeight(360)
         layout.addStretch()
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        buttons.button(QDialogButtonBox.StandardButton.Save).setObjectName("primary")
-        if embedded:
-            buttons.button(QDialogButtonBox.StandardButton.Save).setText("Save changes")
-        buttons.accepted.connect(self.commit)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        outer.addWidget(body, 1)
+        self.set_dirty(False)
+        if not embedded:
+            # A standalone dialog has no live dirty tracking: plain Save / Cancel.
+            self.unsaved.hide()
+            self.saved.hide()
+            self.save_button.setEnabled(True)
+            self.discard_button.setText("Cancel")
+            self.discard_button.setEnabled(True)
+
+    def set_dirty(self, dirty):
+        self.unsaved.setVisible(dirty)
+        self.saved.setVisible(not dirty)
+        # Both buttons keep their place, so the header never reflows.
+        self.save_button.setEnabled(dirty)
+        self.discard_button.setEnabled(dirty)
 
     def commit(self):
         binding = self.profile["bindings"][self.slot]
@@ -493,45 +785,58 @@ class DeviceButton(QPushButton):
         self.flash = False
         self.input_held = False
         self.assigning = False
-        self.name, self.signal, self.number = "", "", ""
+        self.configured = True
+        self.name, self.signal, self.number, self.caption = "", "", "", ""
+
+    def colors(self):
+        pressed = self.flash or self.input_held
+        chosen = self.selected or self.assigning
+        if pressed:
+            return THEME["pressed"], THEME["pressed"], THEME["pressed_text"], Qt.PenStyle.SolidLine
+        if chosen:
+            return THEME["accent"], THEME["accent"], THEME["accent_ink"], Qt.PenStyle.SolidLine
+        hover = self.underMouse() or self.isDown()
+        if not self.configured:
+            return (THEME["hover"] if hover else THEME["bg"]), THEME["muted"], THEME["muted"], Qt.PenStyle.DashLine
+        return (THEME["hover"] if hover else THEME["raised"]), (THEME["muted"] if hover else THEME["strong"]), THEME["text"], Qt.PenStyle.SolidLine
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        rect = QRectF(self.rect()).adjusted(2, 2, -2, -2)
-        pressed = self.flash or self.input_held
-        chosen = self.selected or self.assigning
-        if pressed:
-            fill, border, text = "#d1d5d8", "#626b70", "#252b2e"
-        elif chosen:
-            fill, border, text = "#168b91", "#126f75", "#ffffff"
-        elif self.underMouse() or self.isDown():
-            fill, border, text = "#f0f2f2", "#626b70", "#181818"
-        else:
-            fill, border, text = "#ffffff", "#181818", "#181818"
+        rect = QRectF(self.rect()).adjusted(1.5, 1.5, -1.5, -1.5)
+        fill, border, text, style = self.colors()
         painter.setBrush(QColor(fill))
-        painter.setPen(QPen(QColor(border), 2))
-        if self.slot.startswith("top_"):
-            index = ("top_left", "top_middle", "top_right").index(self.slot)
-            width = self.width()
-            outline = QPainterPath()
-            outline.addRoundedRect(QRectF(1-index*width, 1, width*3-2, 285), 35, 35)
-            painter.setClipPath(outline)
-            painter.fillRect(self.rect(), QColor(fill))
-            painter.drawPath(outline)
-            painter.drawLine(0, self.height()-1, width, self.height()-1)
-            if index < 2:
-                painter.drawLine(width-1, 0, width-1, self.height())
+        pen = QPen(QColor(border), 1.5, style)
+        painter.setPen(pen)
+        if self.slot == "top_left":
+            painter.drawPath(rounded_path(rect, 30, 9, 9, 9))
+        elif self.slot == "top_right":
+            painter.drawPath(rounded_path(rect, 9, 30, 9, 9))
         else:
-            painter.drawRoundedRect(rect, 10 if not self.compact else 5, 10 if not self.compact else 5)
+            radius = 8 if self.compact else 11
+            painter.drawRoundedRect(rect, radius, radius)
         painter.setPen(QColor(text))
         if self.slot in ROTATIONS or self.slot == "neutral":
-            painter.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
-            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, self.number)
+            if self.height() >= 58:
+                painter.setFont(QFont(self.font().family(), 15))
+                painter.drawText(QRectF(rect.x(), rect.y() + 4, rect.width(), rect.height() * .58), Qt.AlignmentFlag.AlignCenter, self.number)
+                small = QFont(self.font().family(), 8)
+                small.setWeight(QFont.Weight.DemiBold)
+                painter.setFont(small)
+                painter.drawText(rect.adjusted(0, 0, 0, -6), Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom, self.caption)
+            else:
+                # Compact copies (dial modifier editor): glyph only, the name is in the tooltip.
+                painter.setFont(QFont(self.font().family(), 13))
+                painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, self.number)
+        elif self.slot.startswith("top_"):
+            small = QFont("Consolas", 8)
+            painter.setFont(small)
+            painter.drawText(rect.adjusted(0, 0, 0, -7), Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignBottom, self.signal)
         if self.hasFocus():
-            painter.setPen(QPen(QColor("#777"), 1, Qt.PenStyle.DotLine))
+            painter.setPen(QPen(QColor(THEME["muted"]), 1, Qt.PenStyle.DotLine))
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRoundedRect(rect.adjusted(5, 5, -5, -5), 6, 6)
+            inset = 3 if self.compact else 5
+            painter.drawRoundedRect(rect.adjusted(inset, inset, -inset, -inset), 5, 5)
 
     def enterEvent(self, event):
         self.update()
@@ -545,9 +850,11 @@ class DeviceButton(QPushButton):
 class DeviceMap(QWidget):
     selected = Signal(str)
 
+    HEIGHT = 420
+
     def __init__(self):
         super().__init__()
-        self.setMinimumSize(460, 440)
+        self.setMinimumSize(460, self.HEIGHT)
         self.buttons = {}
         for slot, _ in SLOTS:
             widget = DeviceButton(slot, slot.startswith(("left_", "right_")))
@@ -557,14 +864,14 @@ class DeviceMap(QWidget):
 
     def resizeEvent(self, event):
         cx = self.width() / 2
-        x, y, w = cx - 129, max(28, (self.height()-420)/2), 258
+        x, y, w = cx - 129, max(8, (self.height() - self.HEIGHT) / 2), 258
         self.body_y = y
-        positions = {"top_left": (x, y, 86, 66), "top_middle": (x+86, y, 86, 66),
-            "top_right": (x+172, y, 86, 66), "left_upper": (x-11, y+84, 24, 62),
-            "left_lower": (x-11, y+151, 24, 62), "right_upper": (x+w-13, y+84, 24, 62),
-            "right_lower": (x+w-13, y+151, 24, 62)}
+        positions = {"top_left": (x+10, y+10, 76, 62), "top_middle": (x+91, y+10, 76, 62),
+            "top_right": (x+172, y+10, 76, 62), "left_upper": (x-12, y+96, 25, 62),
+            "left_lower": (x-12, y+166, 25, 62), "right_upper": (x+w-13, y+96, 25, 62),
+            "right_lower": (x+w-13, y+166, 25, 62)}
         for i, slot in enumerate(("pressed_ccw", "ccw", "neutral", "cw", "pressed_cw")):
-            positions[slot] = (cx-220+i*90, y+328, 80, 66)
+            positions[slot] = (cx-206+i*84, y+352, 76, 62)
         for slot, rect in positions.items():
             self.buttons[slot].setGeometry(*(int(v) for v in rect))
 
@@ -572,25 +879,36 @@ class DeviceMap(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         cx = self.width() / 2
-        painter.translate(0, getattr(self, "body_y", 28)-14)
-        painter.setPen(QPen(QColor("#181818"), 2.5))
-        painter.setBrush(QColor("white"))
-        painter.drawRoundedRect(QRectF(cx-128, 14, 256, 285), 35, 35)
-        painter.drawEllipse(QRectF(cx-76, 119, 152, 152))
-        painter.setPen(QPen(QColor("#dedede"), 1))
-        painter.drawEllipse(QRectF(cx-65, 130, 130, 130))
+        painter.translate(0, getattr(self, "body_y", 8))
+        painter.setPen(QPen(QColor(THEME["strong"]), 1.5))
+        painter.setBrush(QColor(THEME["panel"]))
+        painter.drawRoundedRect(QRectF(cx-129, 0, 258, 300), 40, 40)
+        painter.setBrush(QColor(THEME["raised"]))
+        painter.drawEllipse(QRectF(cx-77, 110, 154, 154))
+        painter.setPen(QPen(QColor(THEME["line"]), 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(QRectF(cx-63, 124, 126, 126))
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#181818"))
-        painter.drawEllipse(QRectF(cx-6, 140, 12, 12))
+        painter.setBrush(QColor(THEME["accent"]))
+        painter.drawEllipse(QRectF(cx-5, 132, 10, 10))
+        painter.setPen(QColor(THEME["muted"]))
+        caption = QFont(self.font().family(), 7)
+        caption.setWeight(QFont.Weight.DemiBold)
+        caption.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.4)
+        painter.setFont(caption)
+        painter.drawText(QRectF(0, 318, self.width(), 24), Qt.AlignmentFlag.AlignCenter, "DIAL")
 
     def refresh(self, profile):
-        symbols = {"pressed_ccw": "↓ ↶", "ccw": "↶", "neutral": "↓", "cw": "↷", "pressed_cw": "↓ ↷"}
+        symbols = {"pressed_ccw": "↺", "ccw": "↺", "neutral": "●", "cw": "↻", "pressed_cw": "↻"}
+        captions = {"pressed_ccw": "PRESS", "ccw": "TURN", "neutral": "PRESS", "cw": "TURN", "pressed_cw": "PRESS"}
         for i, (slot, _) in enumerate(SLOTS):
             binding = profile["bindings"][slot]
             widget = self.buttons[slot]
             widget.name, widget.signal = binding["name"], binding["input"]
             widget.number = symbols.get(slot, "")
-            widget.setToolTip(binding["name"] + "\nInput · " + binding["input"])
+            widget.caption = captions.get(slot, "")
+            widget.configured = any(binding.get(g, {"kind": "none"})["kind"] != "none" for g in GESTURES)
+            widget.setToolTip(binding["name"] + "\nInput · " + binding["input"] + ("" if widget.configured else "\nNot set · click to choose actions"))
             widget.setAccessibleName(binding["name"])
             widget.setAccessibleDescription("Configure input " + binding["input"])
             widget.update()
@@ -677,11 +995,21 @@ class OptionsDialog(QDialog):
         self.loading = False
         self.current_cycle = None
         self.setWindowTitle("Alt Clip Ctrl · Options")
-        self.resize(800, 680)
+        self.resize(840, 720)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 20)
-        layout.setSpacing(14)
-        layout.addWidget(label("Options", "title"))
+        layout.setContentsMargins(24, 20, 24, 18)
+        layout.setSpacing(12)
+        title_row = QHBoxLayout()
+        title_row.addWidget(label("Options", "title"), 1)
+        footer = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        footer.button(QDialogButtonBox.StandardButton.Save).setObjectName("primary")
+        footer.button(QDialogButtonBox.StandardButton.Save).setToolTip("Save options (Ctrl+S)")
+        footer.button(QDialogButtonBox.StandardButton.Cancel).setObjectName("ghost")
+        footer.accepted.connect(self.commit)
+        footer.rejected.connect(self.reject)
+        QShortcut(QKeySequence(QKeySequence.StandardKey.Save), self).activated.connect(self.commit)
+        title_row.addWidget(footer, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addLayout(title_row)
         tabs = QTabWidget()
         layout.addWidget(tabs, 1)
         profiles = QWidget()
@@ -715,7 +1043,7 @@ class OptionsDialog(QDialog):
         p.addWidget(detected)
         p.addWidget(label("Programs without a link keep the current profile. Button actions can switch profiles too; assign Switch profile in any button's menu.", "muted", True))
         p.addStretch()
-        tabs.addTab(profiles, "Profiles & programs")
+        tabs.addTab(profiles, "Profiles && programs")
 
         cycles = QWidget()
         c = QVBoxLayout(cycles)
@@ -745,12 +1073,12 @@ class OptionsDialog(QDialog):
             row.addWidget(button(text, callback))
         c.addLayout(row)
         c.addWidget(label("Lists wrap independently. Direct matching keyboard shortcuts resync their positions. Mouse tool changes cannot be detected.", "muted", True))
-        tabs.addTab(cycles, "Actions & cycles")
+        tabs.addTab(cycles, "Actions && cycles")
 
         advanced = QWidget()
         a = QVBoxLayout(advanced)
-        a.setContentsMargins(20, 20, 20, 20)
-        a.setSpacing(18)
+        a.setContentsMargins(20, 16, 20, 16)
+        a.setSpacing(10)
         a.addWidget(label("Gesture timing", "section"))
         form = QFormLayout()
         self.tap = QSpinBox()
@@ -792,11 +1120,7 @@ class OptionsDialog(QDialog):
         a.addWidget(label("Import old cycle lists and compatible output actions as new profiles. Device inputs stay separate from Alt, Ctrl and Shift.", "muted", True))
         a.addWidget(button("Import settings XML…", self.import_xml))
         a.addStretch()
-        advanced_scroll = QScrollArea()
-        advanced_scroll.setWidgetResizable(True)
-        advanced_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        advanced_scroll.setWidget(advanced)
-        tabs.addTab(advanced_scroll, "Advanced")
+        tabs.addTab(advanced, "Advanced")
 
         device = QWidget()
         d = QVBoxLayout(device)
@@ -827,8 +1151,8 @@ class OptionsDialog(QDialog):
 
         hue_page = QWidget()
         hue_layout = QVBoxLayout(hue_page)
-        hue_layout.setContentsMargins(20, 20, 20, 20)
-        hue_layout.setSpacing(12)
+        hue_layout.setContentsMargins(20, 16, 20, 16)
+        hue_layout.setSpacing(9)
         hue_layout.addWidget(label("Fixed hue wheel", "section"))
         hue_layout.addWidget(label("Each dial step clicks the next point on the visible wheel and returns your pointer. The last angle is remembered, including after restarting. No colour detection is used.", "muted", True))
         hue_layout.addWidget(button("Calibrate on screen…", self.calibrate_hue))
@@ -858,16 +1182,7 @@ class OptionsDialog(QDialog):
         hue_layout.addWidget(self.hue_reset)
         hue_layout.addWidget(label("0° is the top; angles increase clockwise. Assign Dial hue wheel under With dial, or assign Hue wheel clockwise/counterclockwise to individual turns. Physical mouse buttons or modifiers pause hue clicks. Linux requires X11 and libXtst.", "muted", True))
         hue_layout.addStretch()
-        hue_scroll = QScrollArea()
-        hue_scroll.setWidgetResizable(True)
-        hue_scroll.setWidget(hue_page)
-        tabs.addTab(hue_scroll, "Hue wheel")
-
-        footer = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        footer.button(QDialogButtonBox.StandardButton.Save).setObjectName("primary")
-        footer.accepted.connect(self.commit)
-        footer.rejected.connect(self.reject)
-        layout.addWidget(footer)
+        tabs.addTab(hue_page, "Hue wheel")
         self.load_profile()
         self.selector.currentIndexChanged.connect(self.change_profile)
         self.cycle_selector.currentIndexChanged.connect(self.change_cycle_list)
@@ -1145,42 +1460,58 @@ class MainWindow(QMainWindow):
         self.resize(1320, 860)
         self.setMinimumSize(1240, 800)
         self.inspector = None
+        self.preferences_path = self.path.with_suffix(".ui.json")
+        self.apply_theme(self.load_theme(), remember=False)
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
-        layout.setContentsMargins(0, 0, 0, 12)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        header_widget = QWidget()
+        header_widget = QFrame()
+        header_widget.setObjectName("topBar")
+        header_widget.setFixedHeight(60)
         header = QHBoxLayout(header_widget)
-        header.setContentsMargins(22, 18, 22, 18)
-        header.setSpacing(16)
-        header.addWidget(label("Alt Clip Ctrl", "section"))
-        header.addWidget(label("Profile", "muted"))
+        header.setContentsMargins(20, 0, 20, 0)
+        header.setSpacing(12)
+        logo = QLabel()
+        logo.setPixmap(QIcon(str(ASSETS / "AltClipCtrl.ico")).pixmap(26, 26))
+        header.addWidget(logo)
+        header.addWidget(label("Alt Clip Ctrl", "brand"))
+        header.addSpacing(10)
+        header.addWidget(label("Profile", "field"))
         self.profiles = QComboBox()
-        self.profiles.setMinimumWidth(175)
+        self.profiles.setMinimumWidth(190)
+        self.profiles.setAccessibleName("Profile")
         header.addWidget(self.profiles)
-        self.program_links = label("", "muted")
-        self.program_links.setMaximumWidth(220)
-        header.addWidget(self.program_links)
+        self.program_links = label("", "chip")
+        self.program_links.setMaximumWidth(240)
+        self.program_links.setFixedHeight(26)
+        header.addWidget(self.program_links, 0, Qt.AlignmentFlag.AlignVCenter)
         header.addStretch()
-        self.enabled = QCheckBox("Enabled")
+        self.enabled = Switch("Enabled")
         self.enabled.setChecked(self.config["enabled"])
         self.enabled.toggled.connect(self.toggle_enabled)
+        self.enabled.toggled.connect(lambda on: self.enabled.setText("Enabled" if on else "Paused"))
+        self.enabled.setText("Enabled" if self.config["enabled"] else "Paused")
         header.addWidget(self.enabled)
+        header.addSpacing(4)
         self.quick_assign = button("Quick assign", self.start_assignment)
         header.addWidget(self.quick_assign)
         header.addWidget(button("Cycle lists", lambda: self.open_options(cycle_lists=True)))
+        self.theme_button = ThemeButton(self.toggle_theme)
+        header.addWidget(self.theme_button)
         header.addWidget(button("Options", self.open_options))
         layout.addWidget(header_widget)
-        layout.addWidget(line())
         self.intro_title = label("", "title")
         self.intro_hint = label("", "muted")
         self.intro_title.hide()
         self.intro_hint.hide()
         self.assignment_panel = QFrame()
-        self.assignment_panel.setStyleSheet("QFrame { background: #f5f5f5; border-radius: 8px; } QLabel { background: transparent; }")
+        self.assignment_panel.setObjectName("assignmentPanel")
         assignment_layout = QVBoxLayout(self.assignment_panel)
-        assignment_layout.setContentsMargins(16, 12, 16, 12)
+        assignment_layout.setContentsMargins(16, 14, 16, 14)
+        assignment_layout.setSpacing(8)
+        assignment_layout.addWidget(label("QUICK ASSIGN", "eyebrow"))
         self.assignment_title = label("", "section")
         self.assignment_hint = label("", "muted", True)
         self.assignment_progress = label("", "muted", True)
@@ -1188,6 +1519,7 @@ class MainWindow(QMainWindow):
         assignment_layout.addWidget(self.assignment_hint)
         assignment_layout.addWidget(self.assignment_progress)
         assignment_buttons = QHBoxLayout()
+        assignment_buttons.setSpacing(8)
         self.assignment_back = button("Back", self.assignment_go_back)
         self.assignment_skip = button("Skip", self.assignment_go_skip)
         self.assignment_save = button("Save inputs", self.save_assignment, primary=True)
@@ -1198,53 +1530,86 @@ class MainWindow(QMainWindow):
         assignment_buttons.addWidget(self.assignment_save)
         assignment_layout.addLayout(assignment_buttons)
         self.assignment_panel.hide()
-        layout.addWidget(self.assignment_panel)
         body = QHBoxLayout()
         body.setSpacing(0)
-        history_area = QWidget()
+        history_area = QFrame()
         history_area.setObjectName("historyPanel")
-        history_area.setFixedWidth(240)
+        history_area.setFixedWidth(248)
         history_layout = QVBoxLayout(history_area)
-        history_layout.setContentsMargins(18, 22, 18, 18)
-        history_layout.setSpacing(14)
+        history_layout.setContentsMargins(16, 20, 16, 16)
+        history_layout.setSpacing(12)
         history_header = QHBoxLayout()
         history_header.addWidget(label("Recent actions", "section"), 1)
-        history_header.addWidget(button("Clear", self.clear_history))
+        clear = button("Clear", self.clear_history)
+        clear.setObjectName("ghost")
+        history_header.addWidget(clear)
         history_layout.addLayout(history_header)
         self.history_empty = label("Press a controller button to see its action here.", "muted", True)
         history_layout.addWidget(self.history_empty)
         self.history = QListWidget()
         self.history.setWordWrap(True)
         self.history.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.history.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         history_layout.addWidget(self.history, 1)
-        history_layout.addWidget(label("Your three most recent actions", "muted", True))
+        history_layout.addWidget(label("Your three most recent actions, with the action that was actually called.", "muted", True))
         body.addWidget(history_area)
         map_area = QVBoxLayout()
-        map_area.setContentsMargins(12, 22, 12, 18)
-        map_area.setSpacing(8)
+        map_area.setContentsMargins(24, 22, 24, 16)
+        map_area.setSpacing(6)
         self.profile_title = label("", "section")
-        map_area.addWidget(label("YOUR CONTROLLER", "eyebrow"), 0, Qt.AlignmentFlag.AlignHCenter)
+        map_heading = QVBoxLayout()
+        map_heading.setSpacing(2)
+        map_heading.addWidget(label("YOUR CONTROLLER", "eyebrow"))
+        self.mapping_count = label("", "heading")
+        map_heading.addWidget(self.mapping_count)
+        map_area.addLayout(map_heading)
         self.map = DeviceMap()
         self.map.selected.connect(self.edit_binding)
         map_area.addWidget(self.map, 1)
-        self.mapping_count = label("", "muted")
-        map_area.addWidget(self.mapping_count, 0, Qt.AlignmentFlag.AlignHCenter)
-        map_area.addWidget(label("Click to configure · Hover to see its name", "muted"), 0, Qt.AlignmentFlag.AlignHCenter)
+        map_area.addWidget(Legend())
+        hint = label("Click a control to edit it · hover to see its name", "muted")
+        map_area.addWidget(hint, 0, Qt.AlignmentFlag.AlignHCenter)
         body.addLayout(map_area, 1)
-        self.inspector_area = QWidget()
+        self.inspector_area = QFrame()
         self.inspector_area.setObjectName("inspectorPanel")
-        self.inspector_area.setFixedWidth(440)
+        self.inspector_area.setFixedWidth(460)
         self.inspector_layout = QVBoxLayout(self.inspector_area)
         self.inspector_layout.setContentsMargins(0, 0, 0, 0)
-        self.inspector_empty = label("Select a control to choose its input and actions.", "muted", True)
-        self.inspector_empty.setContentsMargins(24, 24, 24, 24)
-        self.inspector_layout.addWidget(self.inspector_empty)
+        self.inspector_layout.setSpacing(0)
+        self.assignment_box = QWidget()
+        assignment_box_layout = QVBoxLayout(self.assignment_box)
+        assignment_box_layout.setContentsMargins(16, 16, 16, 16)
+        assignment_box_layout.addWidget(self.assignment_panel)
+        assignment_box_layout.addStretch()
+        self.assignment_box.hide()
+        self.inspector_layout.addWidget(self.assignment_box, 1)
+        self.inspector_empty = QWidget()
+        empty = QVBoxLayout(self.inspector_empty)
+        empty.setContentsMargins(28, 28, 28, 28)
+        empty.addStretch()
+        empty.addWidget(label("Nothing selected", "section"), 0, Qt.AlignmentFlag.AlignHCenter)
+        empty_hint = label("Select a control on the controller to choose its input and actions.", "muted", True)
+        empty_hint.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        empty.addWidget(empty_hint)
+        empty.addStretch()
+        self.inspector_layout.addWidget(self.inspector_empty, 1)
         body.addWidget(self.inspector_area)
         layout.addLayout(body, 1)
-        layout.addWidget(line())
-        self.status = label("Starting input listener…", "muted", True)
-        self.status.setContentsMargins(22, 12, 22, 0)
-        layout.addWidget(self.status)
+        status_bar = QFrame()
+        status_bar.setObjectName("statusBar")
+        status_bar.setFixedHeight(30)
+        status_layout = QHBoxLayout(status_bar)
+        status_layout.setContentsMargins(20, 0, 20, 0)
+        self.status = StatusLabel("Starting input listener…")
+        status_layout.addWidget(self.status, 1)
+        status_layout.addWidget(label(f"Alt Clip Ctrl {__version__}", "muted"))
+        layout.addWidget(status_bar)
+        self.save_shortcut = QShortcut(QKeySequence(QKeySequence.StandardKey.Save), self)
+        self.save_shortcut.activated.connect(lambda: self.inspector is not None and self.save_inspector())
+        self.dirty_clock = QTimer(self)
+        self.dirty_clock.setInterval(250)
+        self.dirty_clock.timeout.connect(self.refresh_dirty)
+        self.dirty_clock.start()
         self.profiles.currentIndexChanged.connect(self.choose_profile)
         self.refresh()
         self.clock = QTimer(self)
@@ -1406,12 +1771,8 @@ class MainWindow(QMainWindow):
         if not self.leave_inspector():
             return
         self.close_inspector()
-        self.inspector_area.setEnabled(False)
+        self.inspector_empty.hide()
         self.reset()
-        self.assignment_original_size = self.size()
-        self.assignment_original_minimum = self.minimumHeight()
-        self.setMinimumHeight(960)
-        self.resize(self.width(), max(960, self.height()))
         self.assignment_id += 1
         self.assignment = QuickAssignment(copy.deepcopy(self.active_profile()))
         if self.backend:
@@ -1419,6 +1780,7 @@ class MainWindow(QMainWindow):
         self.intro_title.hide()
         self.intro_hint.hide()
         self.assignment_panel.show()
+        self.assignment_box.show()
         self.quick_assign.setEnabled(False)
         self.profiles.setEnabled(False)
         self.enabled.setEnabled(False)
@@ -1467,16 +1829,15 @@ class MainWindow(QMainWindow):
     def cancel_assignment(self):
         self.assignment_id += 1
         self.assignment = None
-        self.inspector_area.setEnabled(True)
         self.map.highlight(None)
         self.assignment_panel.hide()
+        self.assignment_box.hide()
+        self.inspector_empty.show()
         self.intro_title.hide()
         self.intro_hint.hide()
         self.quick_assign.setEnabled(True)
         self.profiles.setEnabled(True)
         self.enabled.setEnabled(True)
-        self.setMinimumHeight(self.assignment_original_minimum)
-        self.resize(self.assignment_original_size)
         self.reset()
         self.refresh_scope()
 
@@ -1697,10 +2058,12 @@ class MainWindow(QMainWindow):
 
     def close_inspector(self):
         if self.inspector is not None:
-            self.inspector_layout.removeWidget(self.inspector_scroll)
-            self.inspector_scroll.deleteLater()
+            self.inspector_layout.removeWidget(self.inspector)
+            self.inspector.hide()
+            self.inspector.deleteLater()
             self.inspector = None
-        self.inspector_empty.show()
+        if self.assignment is None:
+            self.inspector_empty.show()
         for widget in self.map.buttons.values():
             widget.selected = False
             widget.update()
@@ -1766,17 +2129,46 @@ class MainWindow(QMainWindow):
         self.inspector_original = copy.deepcopy(dialog.profile["bindings"][slot])
         buttons = dialog.findChild(QDialogButtonBox)
         buttons.accepted.disconnect()
-        buttons.rejected.disconnect()
+        dialog.discard_button.clicked.disconnect()
         buttons.accepted.connect(self.save_inspector)
-        buttons.rejected.connect(self.close_inspector)
-        self.inspector_scroll = QScrollArea()
-        self.inspector_scroll.setWidgetResizable(True)
-        self.inspector_scroll.setWidget(dialog)
-        self.inspector_layout.addWidget(self.inspector_scroll)
+        dialog.discard_button.clicked.connect(self.discard_inspector)
+        self.inspector_layout.addWidget(dialog, 1)
         self.inspector_empty.hide()
         self.map.buttons[slot].selected = True
         self.map.buttons[slot].update()
         dialog.show()
+
+    def discard_inspector(self):
+        """Throw away the draft and show the saved version of the same control."""
+        if self.inspector is None:
+            return
+        slot = self.inspector.slot
+        self.close_inspector()
+        self.edit_binding(slot)
+
+    def refresh_dirty(self):
+        if self.inspector is not None:
+            self.inspector.set_dirty(self.inspector_is_dirty())
+
+    def load_theme(self):
+        try:
+            name = json.loads(self.preferences_path.read_text(encoding="utf-8")).get("theme", "dark")
+        except (OSError, ValueError, AttributeError):
+            name = "dark"
+        return name if name in THEMES else "dark"
+
+    def apply_theme(self, name, remember=True):
+        set_theme(name)
+        if hasattr(self, "theme_button"):
+            self.theme_button.refresh()
+        if remember:
+            try:
+                self.preferences_path.write_text(json.dumps({"theme": name}), encoding="utf-8")
+            except OSError as exc:
+                self.status.setText("Could not save the theme: " + str(exc))
+
+    def toggle_theme(self):
+        self.apply_theme("light" if THEME["name"] == "dark" else "dark")
 
     def open_options(self, cycle_lists=False):
         if self.assignment is not None or not self.leave_inspector():
